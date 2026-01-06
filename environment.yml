@@ -1,0 +1,19 @@
+name: hyperalign
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - tqdm
+  - matplotlib
+  - pyyaml
+  - pytorch
+  - pytorch-cuda=12.1
+  - torchvision
+  - pip:
+      - rich

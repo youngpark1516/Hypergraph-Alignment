@@ -1,0 +1,13 @@
+run:
+  name: week1_sanity
+  seed: 42
+  out_root: results/runs
+
+data:
+  # change these when you're ready
+  processed_root: data/processed
+  dataset: deformingthings4d   # deformingthings4d | faust | sapien
+  split: train                # train | val | test
+
+sanity:
+  max_examples_to_print: 3
