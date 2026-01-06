@@ -1,4 +1,3 @@
-cat > README.md <<'EOF'
 # Hypergraph Point-Cloud Registration
 
 Hypergraph-based correspondence + registration for deforming and articulated 3D shapes.
