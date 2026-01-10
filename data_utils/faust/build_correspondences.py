@@ -26,12 +26,29 @@ def load_gt_flags(gt_path: Path) -> np.ndarray:
     return np.loadtxt(gt_path, dtype=np.int8).astype(bool)
 
 
+def compute_normals(points: np.ndarray, k: int = 30) -> np.ndarray:
+    if points.shape[0] < 3:
+        raise ValueError("Need at least 3 points to estimate normals.")
+    k = max(3, min(k, points.shape[0] - 1))
+    pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points.astype(np.float64)))
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamKNN(knn=k))
+    normals = np.asarray(pcd.normals, dtype=np.float32)
+    return normals
+
+
 def map_template_to_scan(reg_path: Path, scan_pts: np.ndarray) -> np.ndarray:
     reg_pts = load_registration_vertices(reg_path)
     pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(scan_pts))
     kdt = o3d.geometry.KDTreeFlann(pcd)
     nearest = np.empty((reg_pts.shape[0],), dtype=np.int64)
-    for i, v in enumerate(reg_pts):
+    iterator = enumerate(reg_pts)
+    iterator = tqdm(
+        iterator,
+        total=reg_pts.shape[0],
+        desc=f"Mapping {reg_path.stem}",
+        leave=False,
+    )
+    for i, v in iterator:
         _, idx, _ = kdt.search_knn_vector_3d(v, 1)
         nearest[i] = idx[0]
     return nearest
@@ -90,23 +107,45 @@ def build_pair(a: str, b: str, raw_root: Path, out_root: Path):
     valid_t = np.where(maskA & maskB)[0]
     src_inds = mapA[valid_t]
     tgt_inds = mapB[valid_t]
-    src_coords = scanA[src_inds]
-    tgt_coords = scanB[tgt_inds]
+    xyz0 = scanA[src_inds]
+    xyz1 = scanB
+    normal0 = compute_normals(scanA)[src_inds]
+    normal1 = compute_normals(scanB)
+    corres = tgt_inds
 
     out_path = out_pairs / f"{a}_{b}.npz"
-    np.savez_compressed(out_path, template_inds=valid_t, src_inds=src_inds, tgt_inds=tgt_inds, src_coords=src_coords, tgt_coords=tgt_coords)
-    print(f"Saved pair correspondences: {out_path} (N={valid_t.shape[0]})")
+    np.savez_compressed(
+        out_path,
+        xyz0=xyz0.astype(np.float32),
+        xyz1=xyz1.astype(np.float32),
+        normal0=normal0.astype(np.float32),
+        normal1=normal1.astype(np.float32),
+        corres=corres.astype(np.int64),
+    )
+    # print(f"Saved pair correspondences: {out_path} (N={xyz0.shape[0]})")
 
 
 def build_all_pairs(raw_root: Path, out_root: Path):
     scans_dir = raw_root / "training" / "scans"
     ids = [p.stem.split("_")[-1] for p in sorted(scans_dir.glob("tr_scan_*.ply"))]
-    # build unordered pairs
-    for a, b in tqdm(itertools.combinations(ids, 2), desc="Building all pairs"):
-        try:
-            build_pair(a, b, raw_root, out_root)
-        except Exception as exc:
-            print(f"Failed pair {a}_{b}: {exc}")
+    groups = {}
+    for idx in ids:
+        body_id = int(idx) // 10
+        groups.setdefault(body_id, []).append(idx)
+    # build unordered pairs within each 10-scan body group
+    for body_id in sorted(groups.keys()):
+        group_ids = sorted(groups[body_id])
+        n_pairs = len(group_ids) * (len(group_ids) - 1) // 2
+        for a, b in tqdm(
+            itertools.combinations(group_ids, 2),
+            desc=f"Building pairs for {body_id * 10:03d}-{body_id * 10 + 9:03d}",
+            unit="pair",
+            total=n_pairs,
+        ):
+            try:
+                build_pair(a, b, raw_root, out_root)
+            except Exception as exc:
+                print(f"Failed pair {a}_{b}: {exc}")
 
 
 def main():
