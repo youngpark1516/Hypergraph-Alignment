@@ -15,4 +15,4 @@ Datasets: DeformingThings4D, FAUST, SAPIEN/PartNet-Mobility.
 ## Setup
 Create the environment (edit as needed):
 - `conda env create -f environment.yml`
-- `conda activate hyperreg`
+- `conda activate hyper-align`
