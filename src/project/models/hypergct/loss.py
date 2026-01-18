@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import recall_score, precision_score, f1_score
-from src.project.utils.SE3 import *
+from project.utils.SE3 import *
 import warnings
 
 warnings.filterwarnings('ignore')

@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 from torch.nn import Linear
 import torch.nn.functional as F
-from src.project.utils.SE3 import transform, integrate_trans
-from src.project.utils.timer import Timer
+from project.utils.SE3 import transform, integrate_trans
+from project.utils.timer import Timer
 import math
 
 def distance(x):  # bs, channel, num_points

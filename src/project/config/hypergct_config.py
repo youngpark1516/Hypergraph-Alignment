@@ -21,6 +21,7 @@ dataset = 'partnet'
 config_dir = Path(__file__).resolve().parent
 dataset_configs = {
     'partnet': config_dir / 'hypergct_partnet.yaml',
+    'faust': config_dir / 'hypergct_faust.yaml',
     '3DMatch': config_dir / 'hypergct_3dmatch.yaml',
     'KITTI': config_dir / 'hypergct_kitti.yaml',
 }
