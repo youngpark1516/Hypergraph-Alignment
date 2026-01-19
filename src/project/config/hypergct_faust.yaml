@@ -1,0 +1,17 @@
+dataset: faust
+root: data/processed/faust/preprocessed/fixedN_4096/fpfh_training
+descriptor: fpfh
+inlier_threshold: 0.05
+downsample: 0.02
+re_thre: 15
+te_thre: 30
+val_ratio: 0.15
+use_features: true
+feature_dim: 33
+neg_ratio: 2.0
+seed_ratio: 0.2
+num_node: 512
+batch_size: 4
+num_workers: 8
+skip_gt_trans: false
+max_epoch: 200
