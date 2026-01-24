@@ -47,11 +47,11 @@ class WHNNAggregator(nn.Module):
         # compute squared euclidean cost between each prototype and each vertex key
         # expand and broadcast: result [bs, E, N]
         # use (a-b)^2 = a^2 + b^2 - 2ab for efficiency
-        K_sq = (K ** 2).sum(-1, keepdim=True)[:, None, :, 0]  # [bs, 1, N] -> then broadcast
-        proto_sq = (proto ** 2).sum(-1, keepdim=True)[:, :, 0]  # [bs, E, 1]
+        K_sq = (K ** 2).sum(-1, keepdim=True).transpose(1, 2)  # [bs, N, 1]
+        proto_sq = (proto ** 2).sum(-1, keepdim=True)  # [bs, E, 1]
         # compute inner product
         inner = torch.bmm(proto, K.permute(0, 2, 1))  # [bs, E, N]
-        cost = proto_sq + K_sq - 2.0 * inner  # [bs, E, N]
+        cost = proto_sq + K_sq.permute(0, 2, 1) - 2.0 * inner  # [bs, E, N]
 
         # entropic regularization via softmax on negative cost
         weights = torch.softmax(-cost / (self.tau + 1e-8), dim=-1)  # [bs, E, N]
