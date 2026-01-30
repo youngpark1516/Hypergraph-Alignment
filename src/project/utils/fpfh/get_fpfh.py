@@ -1,13 +1,23 @@
 import os
 import open3d as o3d
 import numpy as np
+import torch
 import glob
 from tqdm import tqdm
 import argparse
 
 
-def compute_fpfh(points, voxel_size, downsample=True, interp_k=1):
+def compute_fpfh(
+    points,
+    voxel_size,
+    downsample=True,
+    interp_k=1,
+    affine_whiten=False,
+    affine_whiten_k=10,
+):
     points = np.asarray(points, dtype=np.float32)
+    if affine_whiten:
+        points, _, _ = affine_whitening(points)
     pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
     if not downsample:
         pcd.estimate_normals(
@@ -47,7 +57,6 @@ def compute_fpfh(points, voxel_size, downsample=True, interp_k=1):
             sel = np.asarray(idxs, dtype=np.int64)
             features[idx] = fpfh_down_np[sel].mean(axis=0)
             normals[idx] = normals_down[sel].mean(axis=0)
-
     return points, features, normals
 
 
@@ -70,7 +79,16 @@ def save_pair_features(filename, xyz0, xyz1, fpfh0, fpfh1, normals0, normals1, c
     )
 
 
-def process_pairs(pair_files, pair_root, save_root, voxel_size, downsample=True, interp_k=1):
+def process_pairs(
+    pair_files,
+    pair_root,
+    save_root,
+    voxel_size,
+    downsample=True,
+    interp_k=1,
+    affine_whiten=False,
+    affine_whiten_k=10,
+):
     for pair_path in tqdm(pair_files, ncols=50):
         with np.load(pair_path) as data:
             xyz0, xyz1 = load_pair_xyz(data)
@@ -80,10 +98,20 @@ def process_pairs(pair_files, pair_root, save_root, voxel_size, downsample=True,
             continue
 
         xyz0_out, fpfh_np0, normals0 = compute_fpfh(
-            xyz0, voxel_size, downsample=downsample, interp_k=interp_k
+            xyz0,
+            voxel_size,
+            downsample=downsample,
+            interp_k=interp_k,
+            affine_whiten=affine_whiten,
+            affine_whiten_k=affine_whiten_k,
         )
         xyz1_out, fpfh_np1, normals1 = compute_fpfh(
-            xyz1, voxel_size, downsample=downsample, interp_k=interp_k
+            xyz1,
+            voxel_size,
+            downsample=downsample,
+            interp_k=interp_k,
+            affine_whiten=affine_whiten,
+            affine_whiten_k=affine_whiten_k,
         )
 
         rel_path = os.path.relpath(pair_path, pair_root)
@@ -95,7 +123,15 @@ def process_pairs(pair_files, pair_root, save_root, voxel_size, downsample=True,
         # print(pair_path, fpfh_np0.shape, fpfh_np1.shape)
 
 
-def process_partnet(voxel_size=0.02, pair_root=None, save_root=None, downsample=True, interp_k=1):
+def process_partnet(
+    voxel_size=0.02,
+    pair_root=None,
+    save_root=None,
+    downsample=True,
+    interp_k=1,
+    affine_whiten=False,
+    affine_whiten_k=10,
+):
     pair_root = pair_root or "data_utils/partnet/output/rigid_pc"
     save_root = save_root or "data_utils/partnet/output/fpfh_rigid"
     os.makedirs(save_root, exist_ok=True)
@@ -105,11 +141,26 @@ def process_partnet(voxel_size=0.02, pair_root=None, save_root=None, downsample=
         raise ValueError(f"No pair files found under {pair_root}")
 
     process_pairs(
-        pair_files, pair_root, save_root, voxel_size, downsample=downsample, interp_k=interp_k
+        pair_files,
+        pair_root,
+        save_root,
+        voxel_size,
+        downsample=downsample,
+        interp_k=interp_k,
+        affine_whiten=affine_whiten,
+        affine_whiten_k=affine_whiten_k,
     )
 
 
-def process_faust(voxel_size=0.02, pair_root=None, save_root=None, downsample=True, interp_k=1):
+def process_faust(
+    voxel_size=0.02,
+    pair_root=None,
+    save_root=None,
+    downsample=True,
+    interp_k=1,
+    affine_whiten=False,
+    affine_whiten_k=10,
+):
     pair_root = pair_root or "data_utils/faust/data/processed/faust/corres/pairs"
     save_root = save_root or "data_utils/faust/data/processed/faust/fpfh"
     os.makedirs(save_root, exist_ok=True)
@@ -119,9 +170,48 @@ def process_faust(voxel_size=0.02, pair_root=None, save_root=None, downsample=Tr
         raise ValueError(f"No pair files found under {pair_root}")
 
     process_pairs(
-        pair_files, pair_root, save_root, voxel_size, downsample=downsample, interp_k=interp_k
+        pair_files,
+        pair_root,
+        save_root,
+        voxel_size,
+        downsample=downsample,
+        interp_k=interp_k,
+        affine_whiten=affine_whiten,
+        affine_whiten_k=affine_whiten_k,
     )
 
+def affine_whitening(points, eps=1e-3):
+    points = np.asarray(points, dtype=np.float32)
+    n_points = points.shape[0]
+    if n_points == 0:
+        return points, np.zeros(3, dtype=np.float32), np.eye(3, dtype=np.float32)
+
+    X = torch.from_numpy(points)
+    device = X.device
+
+    # Sparse mean: (1, N) @ (N, 3)
+    idx = torch.arange(n_points, device=device)
+    values = torch.full((n_points,), 1.0 / n_points, device=device)
+    w = torch.sparse_coo_tensor(
+        torch.stack([torch.zeros_like(idx), idx]),
+        values,
+        size=(1, n_points),
+        device=device,
+    )
+    mu = torch.sparse.mm(w, X).squeeze(0)
+
+    centered = X - mu
+    denom = max(n_points - 1, 1)
+    cov = (centered.T @ centered) / denom
+    cov = cov + eps * torch.eye(3, device=device)
+
+    U, S, _ = torch.linalg.svd(cov)
+    S = torch.clamp(S, min=eps)
+    sigma_inv_sqrt = U @ torch.diag(S.rsqrt()) @ U.T
+    whitened = (centered @ sigma_inv_sqrt.T).to(dtype=torch.float32)
+
+    return whitened.numpy(), mu.numpy(), cov.numpy()
+    
 
 def main():
     parser = argparse.ArgumentParser(description="Compute FPFH features for paired point clouds.")
@@ -156,6 +246,17 @@ def main():
         default=1,
         help="Number of nearest downsampled points to average when interpolating.",
     )
+    parser.add_argument(
+        "--affine-whitening",
+        action="store_true",
+        help="Apply local affine whitening to points before computing FPFH.",
+    )
+    parser.add_argument(
+        "--affine-whitening-k",
+        type=int,
+        default=10,
+        help="KNN neighborhood size for affine whitening.",
+    )
     args = parser.parse_args()
     downsample = not args.no_downsample
 
@@ -166,6 +267,8 @@ def main():
             save_root=args.save_root,
             downsample=downsample,
             interp_k=args.interp_k,
+            affine_whiten=args.affine_whitening,
+            affine_whiten_k=args.affine_whitening_k,
         )
     elif args.dataset == "partnet":
         process_partnet(
@@ -174,6 +277,8 @@ def main():
             save_root=args.save_root,
             downsample=downsample,
             interp_k=args.interp_k,
+            affine_whiten=args.affine_whitening,
+            affine_whiten_k=args.affine_whitening_k,
         )
 
 
