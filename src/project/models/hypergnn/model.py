@@ -6,7 +6,99 @@ import torch.nn.functional as F
 from project.utils.SE3 import transform, integrate_trans
 from project.utils.timer import Timer
 import math
-from project.models.hypergnn.whnn_agg import WHNNAggregator
+from torch_scatter import scatter_add
+
+
+def sparse_sort(values, index):
+    """
+    Sort values within groups defined by index - optimized for GPU
+    """
+    device = values.device
+    num_projections = values.shape[1]
+    
+    # Use scatter operations which are more memory efficient
+    unique_groups = torch.unique(index)
+    sorted_values = torch.zeros_like(values)
+    sort_indices = torch.zeros_like(values, dtype=torch.long)
+    
+    offset = 0
+    for group_idx in unique_groups:
+        mask = index == group_idx
+        group_positions = torch.nonzero(mask, as_tuple=False).squeeze(-1)
+        group_size = group_positions.shape[0]
+        
+        # Get group values and sort
+        group_values = values[group_positions]  # [group_size, num_projections]
+        sorted_group_values, local_indices = torch.sort(group_values, dim=0)
+        
+        # Map back to global indices
+        for proj in range(num_projections):
+            sorted_values[offset:offset+group_size, proj] = sorted_group_values[:, proj]
+            sort_indices[offset:offset+group_size, proj] = group_positions[local_indices[:, proj]]
+        
+        offset += group_size
+        
+        # Free memory
+        del mask, group_positions, group_values, sorted_group_values, local_indices
+    
+    return sorted_values, sort_indices
+
+
+def interp1d(x, y, xnew, ynew, index):
+    """
+    1D interpolation for sorted data grouped by index
+    Args:
+        x: [num_projections, N] x coordinates (sorted within groups)
+        y: [num_projections, N] y values (sorted within groups) 
+        xnew: [num_projections, M] new x coordinates to interpolate at
+        ynew: [num_projections, M] output buffer for interpolated values
+        index: [N] group indices for x,y
+    Returns:
+        ynew: [num_projections, M] interpolated values
+    """
+    # Get unique groups once
+    unique_indices = torch.unique(index)
+    num_groups = len(unique_indices)
+    
+    # Calculate group sizes
+    group_sizes = torch.bincount(index)
+    
+    offset_old = 0
+    offset_new = 0
+    
+    for group_idx in unique_indices:
+        group_size = group_sizes[group_idx].item()
+        
+        # Get group data for all projections at once
+        x_group = x[:, offset_old:offset_old+group_size]  # [num_proj, group_size]
+        y_group = y[:, offset_old:offset_old+group_size]
+        xnew_group = xnew[:, offset_new:offset_new+group_size]
+        
+        # Vectorized searchsorted for all projections
+        indices = torch.searchsorted(x_group.contiguous(), xnew_group.contiguous())
+        indices = torch.clamp(indices, 1, group_size-1)
+        
+        # Gather neighboring points
+        batch_idx = torch.arange(x_group.shape[0], device=x_group.device).unsqueeze(1)
+        x0 = x_group[batch_idx, indices-1]
+        x1 = x_group[batch_idx, indices]
+        y0 = y_group[batch_idx, indices-1]
+        y1 = y_group[batch_idx, indices]
+        
+        # Interpolate
+        alpha = (xnew_group - x0) / (x1 - x0 + 1e-10)
+        ynew[:, offset_new:offset_new+group_size] = y0 + alpha * (y1 - y0)
+        
+        # Free memory for this iteration
+        del x_group, y_group, xnew_group, indices, batch_idx, x0, x1, y0, y1, alpha
+        
+        offset_old += group_size
+        offset_new += group_size
+    
+    # Final cleanup
+    del unique_indices, group_sizes
+    
+    return ynew
 
 
 def distance(x):  # bs, channel, num_points
@@ -55,6 +147,7 @@ def kabsch(A, B, weights=None, weight_threshold=0):
     if weights is None:
         weights = torch.ones_like(A[:, :, 0])
     weights[weights < weight_threshold] = 0
+    # weights = weights / (torch.sum(weights, dim=-1, keepdim=True) + 1e-6)
 
     # find mean of point cloud
     centroid_A = torch.sum(A * weights[:, :, None], dim=1, keepdim=True) / (torch.sum(weights, dim=1, keepdim=True)[:, :, None] + 1e-6)
@@ -201,13 +294,182 @@ class NonLocalBlock(nn.Module):
         return res
 
 
+class FPSWE_pool(nn.Module):
+    def __init__(self, d_in, num_anchors=1024, num_projections=1024, anch_freeze=True, out_type='linear'):
+        '''
+        The PSWE and LPSWE module that produces 
+        fixed-dimensional permutation-invariant embeddings 
+        for input sets of arbitrary size.
+        '''
+
+        super(FPSWE_pool, self).__init__()
+        self.d_in = d_in # the dimensionality of the space that each set sample belongs to
+        self.num_ref_points = num_anchors # number of points in the reference set
+        self.num_projections = num_projections # number of slices
+        self.anch_freeze = anch_freeze # if True the reference set and the theta are not learnable
+
+        uniform_ref = torch.linspace(-1, 1, num_anchors).unsqueeze(1).repeat(1, num_projections) #num_anchors x num_preojections
+        self.reference = nn.Parameter(uniform_ref, requires_grad=not self.anch_freeze)
+
+        # slicer
+        self.theta = nn.utils.weight_norm(nn.Linear(d_in, num_projections, bias=False), dim=0)
+        if num_projections <= d_in:
+            nn.init.eye_(self.theta.weight_v)
+        else:
+            nn.init.normal_(self.theta.weight_v)
+        self.theta.weight_v.requires_grad = not self.anch_freeze
+
+        self.theta.weight_g.data = torch.ones_like(self.theta.weight_g.data)
+        self.theta.weight_g.requires_grad = False
+
+        # weights to reduce the output embedding dimensionality
+        self.weight = nn.Parameter(torch.zeros(num_projections, num_anchors))
+        nn.init.xavier_uniform_(self.weight)
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.weight)
+        device = self.weight.device
+
+        if self.anch_freeze == False:
+            uniform_ref = torch.linspace(-1, 1, self.num_ref_points).unsqueeze(1).repeat(1, self.num_projections).to(device) #num_anchors x num_preojections
+            self.reference.data = uniform_ref
+
+        if self.num_projections <= self.d_in:
+            nn.init.eye_(self.theta.weight_v)
+        else:
+            nn.init.normal_(self.theta.weight_v)
+        
+
+    def double_self_loops(self, features, index):
+        '''
+        for the isolated nodes double them because pooling only works
+            for minimum 2 elements in a set
+        '''
+        # Find indices where the group appears only once
+        counts = torch.bincount(index)
+        unique_mask = counts[index] == 1
+
+        # Get elements to be duplicated
+        unique_features = features[unique_mask]
+        unique_groups = index[unique_mask]
+        
+        # Stack original tensor with duplicated unique elements
+        new_features = torch.cat((features, unique_features), dim=0)
+        new_index = torch.cat((index, unique_groups), dim=0)
+        
+        # Cleanup intermediate tensors
+        del counts, unique_mask, unique_features, unique_groups
+        
+        return new_features, new_index
+
+    def forward(self, X, hyperedge_index, data=None, name=None):
+        '''
+        Calculates GSW between two empirical distributions.
+        Note that the number of samples is assumed to be equal
+        (This is however not necessary and could be easily extended
+        for empirical distributions with different number of samples)
+        Input:
+            X:  N x dn tensor containing N samples in a dn-dimensional space
+        Output:
+            weighted_embeddings: E x num_projections tensor, containing an embedding of dimension "num_projections" (i.e., number of slices)
+        '''
+   
+        # Step 1: project samples into the 1D slices
+        N, dn = X.shape
+        Xslices = self.get_slice(X) # N x num_projections
+
+        # for the self-loops double the node to be able to apply the pooling 
+        Xslices, hyperedge_index_new = self.double_self_loops(Xslices, hyperedge_index)
+        Xslices_sorted, Xind = sparse_sort(Xslices, hyperedge_index_new)
+
+        # regardless of the column sorting, all of them should have the same resorted index
+        hyperedge_index_1_sorted = hyperedge_index_new[Xind[:,0]]
+        M, dm = self.reference.shape
+
+        eps = 0.00001
+        #this should allow a correct interpolation when M>N
+        margin_up = 0.9999
+        assert (margin_up+eps < 1)
+
+        # Compute constants for this forward pass (no caching to support varying batch structures)
+        deg_helper = torch.ones_like(hyperedge_index_1_sorted)
+        R = torch.arange(hyperedge_index_1_sorted.shape[0]).to(X.device).to(X.dtype)+1
+        pad = torch.tensor([0.0]).to(X.device)
+        edges = torch.sort(torch.unique(hyperedge_index_1_sorted))[0]
+        hyperedge_index_anchors_1 = edges.repeat_interleave(M)
+        num_edges = edges.shape[0]
+        xnew = torch.linspace(0, 1, M).repeat(num_edges).to(X.device).to(X.dtype)
+        xnew = xnew * 0.99998+eps
+
+        ynew = torch.zeros((self.num_projections, M*num_edges)).to(X.device)
+
+        max_edge_index = edges.max()+1
+        out1 = torch.zeros((max_edge_index, self.num_projections)).to(X.device)
+
+        # compute the degree
+        D1 = scatter_add(deg_helper, hyperedge_index_1_sorted) #E
+        D = torch.index_select(D1, 0,  hyperedge_index_1_sorted)
+
+        # Step 2: interpolate 
+
+        # compute the x indices to be used as positions for interpolation
+        # they are computer for each hyperedge in parallel and are uniformly arranged
+        ptr = torch.cat((pad,torch.cumsum(D1, dim=0)))
+        P = torch.index_select(ptr, 0,  hyperedge_index_1_sorted)
+        assert (D.min() >= 2)
+        x = (R-P-1)/(D-1)*0.99999+eps +hyperedge_index_1_sorted
+        x = x.unsqueeze(0).repeat(self.num_projections, 1)
+
+        xnew = xnew + hyperedge_index_anchors_1
+        xnew = xnew.unsqueeze(0).repeat(self.num_projections, 1)
+
+        #this still correspond to hyperedge_index_1_sorted
+        y = torch.transpose(Xslices_sorted, 0, 1).reshape(self.num_projections, -1)
+        
+        # interpolate y based on the x values
+        Xslices_sorted_interpolated = interp1d(x, y, xnew, ynew, hyperedge_index_1_sorted).view(self.num_projections, -1)
+        Xslices_sorted_interpolated = torch.transpose(Xslices_sorted_interpolated, 0, 1)
+
+        # reshape the (projected) references. no need for projection since we sample them already projected
+        Rslices = self.reference.unsqueeze(0).repeat(num_edges,1,1)#.to(X.device) # num_edges x M x num_projections
+        Rslices = Rslices.reshape(num_edges*M,-1) # num_edges x  x num_projections
+
+        # Step 3: sort the references and compute the distance
+        _, Rind = sparse_sort(Rslices, hyperedge_index_anchors_1) #num_edges*M x num_projections
+ 
+        # compute the distance between the sorted samples
+        embeddings = Rslices - torch.gather(Xslices_sorted_interpolated, dim=0, index=Rind)
+        embeddings = embeddings.transpose(0, 1) #num_projections x num_edges*M
+        embeddings = embeddings.reshape(-1, num_edges, M) #num_projections x num_edges x M
+
+        # Step 4: weighted sum of all samples
+        w = self.weight.unsqueeze(1).repeat(1,num_edges,1)        
+        weighted_embeddings = (w * embeddings) #num_projections x num_edges x M
+        weighted_embeddings = weighted_embeddings.mean(-1) #num_projections x num_edges
+        out = weighted_embeddings.transpose(0,1)
+
+        final_out = out1.clone()
+        final_out[edges,:]  = out
+        
+        return final_out
+        
+
+    def get_slice(self, X):
+        '''
+        Slices samples from distribution X~P_X
+        Input:
+            X:  B x N x dn tensor, containing a batch of B sets, each containing N samples in a dn-dimensional space
+        '''
+        return self.theta(X)
+
+
 class feature_aggregation_layer(nn.Module):
     def __init__(self,
                  k=20,
                  num_channels=128,
                  head=1,
                  use_knn=False,
-                 aggr='whnn'):
+                 aggr='mean'):
         super(feature_aggregation_layer, self).__init__()
         self.k = k
         self.use_knn = use_knn
@@ -226,8 +488,13 @@ class feature_aggregation_layer(nn.Module):
                 nn.LeakyReLU(inplace=True, negative_slope=0.2),
                 nn.Conv1d(num_channels // 4, 1, kernel_size=1),
             )
-        if self.aggr == 'whnn':
-            self.whnn = WHNNAggregator(num_channels)
+        elif self.aggr == 'wasserstein':
+            # Use much smaller parameters for GPU memory efficiency
+            self.v2e_pool = FPSWE_pool(d_in=num_channels, num_anchors=16, num_projections=32, anch_freeze=True)
+            self.e2v_pool = FPSWE_pool(d_in=num_channels, num_anchors=16, num_projections=32, anch_freeze=True)
+            # Project back to num_channels
+            self.v2e_proj = nn.Linear(32, num_channels)
+            self.e2v_proj = nn.Linear(32, num_channels)
 
     def forward(self, vertex_feat, edge_feat, edge_weight, incidence, inv_edge_degree, inv_vertex_degree, 
                 edge_scale, knn_k):
@@ -300,23 +567,74 @@ class feature_aggregation_layer(nn.Module):
                 vertex_feat_out = feature.permute(0, 2, 1)
                 edge_feat_out = edge_feat_out.permute(0, 2, 1)
 
-            elif self.aggr == 'whnn':
-                # v->e using WHNN aggregator: get raw edge features [bs, C, E]
-                _, edge_feat_raw = self.whnn(vertex_feat, incidence, inv_edge_degree, inv_vertex_degree, edge_scale)
-
-                # apply MLP if we have existing edge features (same pattern as 'mean')
+            elif self.aggr == 'wasserstein':
+                # v->e: Use Wasserstein aggregation - FULLY VECTORIZED
+                vertex_feat_t = vertex_feat.permute(0, 2, 1)  # [bs, num_nodes, dim]
+                
+                # Flatten batch dimension: convert incidence to flat indices
+                # incidence: [bs, num_nodes, num_nodes] where incidence[b, v, e] > 0 means vertex v in edge e
+                batch_offsets = torch.arange(batch_size, device=vertex_feat.device) * num_nodes
+                
+                # CRITICAL FIX: Cap memberships per vertex to prevent OOM
+                k_edges = min(20, num_nodes)  # Keep top-k strongest edges per vertex
+                top_k_values, top_k_indices = torch.topk(incidence, k=k_edges, dim=2, largest=True, sorted=False)
+                top_k_mask = torch.zeros_like(incidence, dtype=torch.bool)
+                top_k_mask.scatter_(2, top_k_indices, True)
+                incidence = incidence * top_k_mask  # Zero out non-top-k entries
+                
+                # v->e: Find all (batch, vertex, edge) tuples where incidence > 0
+                nonzero_mask = incidence > 0  # [bs, num_nodes, num_nodes]
+                batch_idx, vertex_idx, edge_idx = torch.nonzero(nonzero_mask, as_tuple=True)
+                
+                # Create global indices by adding batch offsets
+                global_vertex_idx = batch_idx * num_nodes + vertex_idx
+                global_edge_idx = batch_idx * num_nodes + edge_idx
+                
+                # Gather vertex features for all connections across all batches
+                vertex_feat_flat = vertex_feat_t.reshape(batch_size * num_nodes, num_channels)
+                vertex_feat_expanded = vertex_feat_flat[global_vertex_idx]  # [total_connections, dim]
+                
+                # Wasserstein pooling with global edge indices - returns compact output
+                edge_feat_compact, edge_indices = self.v2e_pool(vertex_feat_expanded, global_edge_idx)  # [num_edges, 32]
+                edge_feat_compact = self.v2e_proj(edge_feat_compact)  # [num_edges, num_channels]
+                
+                # Map compact output back to full [bs*num_nodes] space
+                edge_feat_pooled = torch.zeros(batch_size * num_nodes, num_channels,
+                                               device=edge_feat_compact.device, dtype=edge_feat_compact.dtype)
+                edge_feat_pooled[edge_indices] = edge_feat_compact
+                
+                # Reshape back to batch
+                edge_feat_out = edge_feat_pooled.reshape(batch_size, num_nodes, num_channels)
+                
                 if edge_feat is not None:
-                    edge_feat_temp = self.mlp(torch.cat((edge_feat, edge_feat_raw), dim=1)).permute(0, 2, 1)  # [bs, E, C]
-                else:
-                    edge_feat_temp = edge_feat_raw.permute(0, 2, 1)  # [bs, E, C]
-
-                # update message of e -> v (same as mean branch)
-                feature = edge_scale * edge_feat_temp  # [bs, E, C]
-                feature = torch.bmm(incidence, feature)
-                feature = torch.bmm(inv_vertex_degree, feature)
-
-                vertex_feat_out = feature.permute(0, 2, 1)  # [bs, C, N]
-                edge_feat_out = edge_feat_temp.permute(0, 2, 1)  # [bs, C, E]
+                    edge_feat_out = self.mlp(torch.cat((edge_feat, edge_feat_out.permute(0, 2, 1)), dim=1)).permute(0, 2, 1)
+                
+                # e->v: Use Wasserstein aggregation from edges to vertices
+                feature = edge_scale * edge_feat_out  # [bs, num_nodes, dim]
+                
+                # e->v: Find all (batch, edge, vertex) tuples (transpose of incidence)
+                batch_idx, edge_idx, vertex_idx = torch.nonzero(nonzero_mask.transpose(1, 2), as_tuple=True)
+                
+                # Create global indices
+                global_edge_idx = batch_idx * num_nodes + edge_idx
+                global_vertex_idx = batch_idx * num_nodes + vertex_idx
+                
+                # Gather edge features for all connections across all batches
+                feature_flat = feature.reshape(batch_size * num_nodes, num_channels)
+                feature_expanded = feature_flat[global_edge_idx]  # [total_connections, dim]
+                
+                # Wasserstein pooling with global vertex indices - returns compact output
+                vertex_feat_compact, vertex_indices = self.e2v_pool(feature_expanded, global_vertex_idx)  # [num_vertices, 32]
+                vertex_feat_compact = self.e2v_proj(vertex_feat_compact)  # [num_vertices, num_channels]
+                
+                # Map compact output back to full [bs*num_nodes] space
+                vertex_feat_pooled = torch.zeros(batch_size * num_nodes, num_channels,
+                                                 device=vertex_feat_compact.device, dtype=vertex_feat_compact.dtype)
+                vertex_feat_pooled[vertex_indices] = vertex_feat_compact
+                
+                # Reshape back to batch
+                vertex_feat_out = vertex_feat_pooled.reshape(batch_size, num_nodes, num_channels).permute(0, 2, 1)
+                edge_feat_out = edge_feat_out.permute(0, 2, 1)
 
             else:
                 raise NotImplementedError
@@ -325,11 +643,11 @@ class feature_aggregation_layer(nn.Module):
 
 
 class HGNN_layer(nn.Module):
-    def __init__(self, in_channels, out_channels, residual_connection=False, use_edge_feature=True):
+    def __init__(self, in_channels, out_channels, residual_connection=False, use_edge_feature=True, aggr='mean'):
         super(HGNN_layer, self).__init__()
         self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=1, bias=False)
         self.bn = nn.BatchNorm1d(out_channels)
-        self.feat_agg = feature_aggregation_layer(k=20)
+        self.feat_agg = feature_aggregation_layer(k=20, num_channels=out_channels, aggr=aggr)
         self.residual_connection = residual_connection
         self.use_edge_feature = use_edge_feature
 
@@ -357,19 +675,21 @@ class HGNN(nn.Module):
                  k=20,
                  num_layers=6,
                  lamda=0.5,
-                 alpha=0.1):
+                 alpha=0.1,
+                 aggr='wasserstein'):
         super(HGNN, self).__init__()
         self.k = k
         self.lamda = lamda
         self.alpha = alpha
         self.num_layers = num_layers
         self.change_H0 = False
+        self.aggr = aggr
         dim = [n_emb_dims, n_emb_dims, n_emb_dims, n_emb_dims, n_emb_dims, n_emb_dims,
                n_emb_dims]
         self.layer0 = nn.Conv1d(in_channel, dim[0], kernel_size=1, bias=True)
         self.blocks = nn.ModuleDict()
         for i in range(num_layers):
-            self.blocks[f'GNN_layer_{i}'] = HGNN_layer(in_channels=dim[i], out_channels=dim[i + 1])
+            self.blocks[f'GNN_layer_{i}'] = HGNN_layer(in_channels=dim[i], out_channels=dim[i + 1], aggr=aggr)
             self.blocks[f'NonLocal_{i}'] = NonLocalBlock(dim[i + 1])
             if i < num_layers - 1:
                 self.blocks[f'update_graph_{i}'] = GraphUpdate(num_channels=128, num_heads=1, num_layer=self.num_layers)
@@ -670,7 +990,7 @@ class MethodName(nn.Module):
         seed_L2_dis = L2_dis * corr_mask + (1 - corr_mask) * float(1e9)
         fitness = self.cal_inliers_normal(seed_L2_dis < self.inlier_threshold, seedwise_trans, src_normal, tgt_normal)
 
-        h = max(1, int(num_seeds * 0.1))
+        h = int(num_seeds * 0.1)
         hypo_inliers_idx = torch.topk(fitness, h, -1, largest=True)[1]  # [bs, h]
         #seeds = seeds.gather(1, hypo_inliers_idx)  # [bs, h]
         seed_mask = seed_mask.gather(dim=1,
@@ -687,25 +1007,16 @@ class MethodName(nn.Module):
         s = 6  # 窗口长度
         m = 3  # 步长
         iters = 15 # 采样次数
-
-        # ensure window size does not exceed available candidates
-        k_top = min(s + iters * m, L2_dis.shape[-1])
-        dis, idx = torch.topk(L2_dis, k_top, -1, largest=False)
-        avail = idx.shape[-1]
-        s0 = min(s, avail)
-        # adjust iterations based on available candidates and max_length
-        max_iters = 0 if (max_length - s0) < 0 else int((max_length - s0) / m)
-        if max_length > s0 + m:
+        max_iters = int((max_length - s) / m)
+        if max_length > s + m:
             iters = min(max_iters, iters)
+
+        dis, idx = torch.topk(L2_dis, s + iters * m, -1, largest=False)
         # corr_mask
         #corr_mask = (seed_mask.sum(dim=1) > 0).float()[:, None, :]
         sampled_list = []
         for i in range(iters + 1):
-            start = i * m
-            end = start + s0
-            if end > avail:
-                break
-            knn_idx = idx[:, :, start: end].contiguous()
+            knn_idx = idx[:, :, i * m: s + i * m].contiguous()
             src_knn = src_keypts.gather(dim=1, index=knn_idx.view([bs, -1])[:, :, None].expand(-1, -1, 3)).view(
                 [bs, -1, s, 3])
             tgt_knn = tgt_keypts.gather(dim=1, index=knn_idx.view([bs, -1])[:, :, None].expand(-1, -1, 3)).view(
