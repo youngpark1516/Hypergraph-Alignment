@@ -11,19 +11,20 @@ from torch_scatter import scatter_add
 
 def sparse_sort(values, index):
     """
-    Sort values within groups - CORRECTED: use proper range-based gap
+    Sort values within groups - GPU-native, robust gap
     """
     device = values.device
     N, num_proj = values.shape
     
-    # Use VALUE RANGE not absmax to ensure group boundaries are respected
-    vmin = values.min().item()
-    vmax = values.max().item()
-    gap = (vmax - vmin) + 1e-6  # Must be > actual range
+    # Keep on GPU, avoid .item() sync. Make gap robust for fp16/bf16
+    vmin = values.amin()  # GPU tensor
+    vmax = values.amax()  # GPU tensor
+    gap = (vmax - vmin) + 1.0  # Larger margin for numerical safety
     
     # Normalize values to [0, gap) then add group offset
     normalized_values = values - vmin
-    sort_keys = index[:, None].to(values.dtype) * gap + normalized_values
+    # Use fp32 for sort keys if index is large to avoid precision loss
+    sort_keys = index[:, None].float() * gap.float() + normalized_values.float()
     
     # Sort all projections at once
     sorted_keys, sort_idx = torch.sort(sort_keys, dim=0)
@@ -89,7 +90,7 @@ def mask_score(score, H0, iter, num_layer, choice='topk'):
         H = torch.where(torch.greater(W, 0), H0, torch.zeros_like(H0))
 
     elif choice == 'topk':
-        k = round(num * 0.1 * (num_layer - 1 - iter))
+        k = max(1, round(num * 0.1 * (num_layer - 1 - iter)))  # Ensure k >= 1
         topk, _ = torch.topk(score, k=k, dim=-1)  # 每个节点选出topk概率的超边，该超边包含该节点
         a_min = torch.min(topk, dim=-1).values.unsqueeze(-1).repeat(1, 1, num)
         W = torch.where(torch.greater_equal(score, a_min), score, torch.zeros_like(score))
@@ -694,7 +695,9 @@ class HGNN(nn.Module):
         self.layer0 = nn.Conv1d(in_channel, dim[0], kernel_size=1, bias=True)
         self.blocks = nn.ModuleDict()
         for i in range(num_layers):
-            self.blocks[f'GNN_layer_{i}'] = HGNN_layer(in_channels=dim[i], out_channels=dim[i + 1], aggr=aggr)
+            # Use Wasserstein only in the last layer, mean for all others
+            layer_aggr = aggr if i == num_layers - 1 else 'mean'
+            self.blocks[f'GNN_layer_{i}'] = HGNN_layer(in_channels=dim[i], out_channels=dim[i + 1], aggr=layer_aggr)
             self.blocks[f'NonLocal_{i}'] = NonLocalBlock(dim[i + 1])
             if i < num_layers - 1:
                 self.blocks[f'update_graph_{i}'] = GraphUpdate(num_channels=128, num_heads=1, num_layer=self.num_layers)
@@ -799,10 +802,6 @@ class MethodName(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, input_data):
-        # Clear cache to reduce fragmentation at start of forward pass
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
         corr, src_pts, tgt_pts, src_normal, tgt_normal = (
             input_data['corr_pos'], input_data['src_keypts'], input_data['tgt_keypts'], input_data['src_normal'],
             input_data['tgt_normal'])

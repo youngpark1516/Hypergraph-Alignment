@@ -10,7 +10,8 @@ use_features: true
 feature_dim: 33
 neg_ratio: 2.0
 seed_ratio: 0.2
-num_node: 512
-batch_size: 6
-num_workers: 12
+num_node: 256
+batch_size: 1
+num_workers: 4
 skip_gt_trans: true
+aggregation: wasserstein

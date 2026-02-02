@@ -6,7 +6,7 @@ downsample: 0.02
 re_thre: 15
 te_thre: 30
 val_ratio: 0.15
-use_features: false
+use_features: true
 feature_dim: 33
 neg_ratio: 2.0
 seed_ratio: 0.2
