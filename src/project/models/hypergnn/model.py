@@ -11,56 +11,59 @@ from torch_scatter import scatter_add
 
 def sparse_sort(values, index):
     """
-    Sort values within groups - VECTORIZED for speed
+    Sort values within groups - CORRECTED: use proper range-based gap
     """
     device = values.device
     N, num_proj = values.shape
     
-    # Create sorting key: combine group index with value
-    # This allows us to sort all groups simultaneously
-    max_val = values.abs().max().item() + 1
-    sort_keys = index[:, None].float() * max_val + values
+    # Use VALUE RANGE not absmax to ensure group boundaries are respected
+    vmin = values.min().item()
+    vmax = values.max().item()
+    gap = (vmax - vmin) + 1e-6  # Must be > actual range
+    
+    # Normalize values to [0, gap) then add group offset
+    normalized_values = values - vmin
+    sort_keys = index[:, None].to(values.dtype) * gap + normalized_values
     
     # Sort all projections at once
     sorted_keys, sort_idx = torch.sort(sort_keys, dim=0)
     
     # Gather sorted values
-    batch_idx = torch.arange(num_proj, device=device).unsqueeze(0).expand(N, -1)
     sorted_values = torch.gather(values, 0, sort_idx)
     
-    del sort_keys, batch_idx
+    del sort_keys, normalized_values
     return sorted_values, sort_idx
 
 
 def interp1d(x, y, xnew, ynew, index):
     """
-    Ultra memory-efficient 1D interpolation - process one projection at a time
+    Proper linear interpolation using searchsorted - process per projection to save memory
     """
     num_proj, M = xnew.shape
     num_proj, N = x.shape
     
-    # Process each projection separately to minimize memory
+    # Process each projection separately to keep memory manageable
     for proj_idx in range(num_proj):
         x_proj = x[proj_idx]  # [N]
         y_proj = y[proj_idx]  # [N]
         xnew_proj = xnew[proj_idx]  # [M]
         
-        # Process in small chunks
-        chunk_size = 64  # Very small chunks
-        for start_idx in range(0, M, chunk_size):
-            end_idx = min(start_idx + chunk_size, M)
-            xnew_chunk = xnew_proj[start_idx:end_idx]  # [chunk_size]
-            
-            # Find nearest neighbor: [chunk_size, 1] - [1, N] = [chunk_size, N]
-            dists = torch.abs(xnew_chunk.unsqueeze(1) - x_proj.unsqueeze(0))
-            nearest_idx = torch.argmin(dists, dim=1)  # [chunk_size]
-            
-            # Gather y values
-            ynew[proj_idx, start_idx:end_idx] = y_proj[nearest_idx]
-            
-            del dists, nearest_idx, xnew_chunk
+        # Use searchsorted to find interpolation indices
+        # This finds where each xnew value would be inserted in sorted x
+        indices = torch.searchsorted(x_proj.contiguous(), xnew_proj.contiguous())
+        indices = torch.clamp(indices, 1, N-1)  # Clamp to valid range
         
-        del x_proj, y_proj, xnew_proj
+        # Get bracketing points for linear interpolation
+        x0 = x_proj[indices - 1]
+        x1 = x_proj[indices]
+        y0 = y_proj[indices - 1]
+        y1 = y_proj[indices]
+        
+        # Linear interpolation: y = y0 + (y1-y0) * (x-x0)/(x1-x0)
+        alpha = (xnew_proj - x0) / (x1 - x0 + 1e-10)
+        ynew[proj_idx] = y0 + alpha * (y1 - y0)
+        
+        del x_proj, y_proj, xnew_proj, indices, x0, x1, y0, y1, alpha
     
     return ynew
 
@@ -199,15 +202,18 @@ class GraphUpdate(nn.Module):
         del score
 
         # update D_n_1, W_edge according to new H
-        degree_E = H.sum(dim=1)
-        De = torch.diag_embed(degree_E)  # torch.sparse_matrix
-        De_n_1 = De ** -1
-        De_n_1[torch.isinf(De_n_1)] = 0
+        degree_E = H.sum(dim=1)  # [bs, num_vertices]
+        # Compute inverse degrees as vectors
+        inv_deg_E = 1.0 / (degree_E + 1e-10)
+        inv_deg_E[torch.isinf(inv_deg_E)] = 0
+        De_n_1 = inv_deg_E.unsqueeze(-1)  # [bs, num_vertices, 1]
 
-        degree_V = H.sum(dim=2)
-        Dv = torch.diag_embed(degree_V)
-        Dv_n_1 = Dv ** -1
-        Dv_n_1[torch.isinf(Dv_n_1)] = 0
+        degree_V = H.sum(dim=2)  # [bs, num_vertices]
+        inv_deg_V = 1.0 / (degree_V + 1e-10)
+        inv_deg_V[torch.isinf(inv_deg_V)] = 0
+        Dv_n_1 = inv_deg_V.unsqueeze(-1)  # [bs, num_vertices, 1]
+        
+        del degree_E, degree_V, inv_deg_E, inv_deg_V
 
         W_edge = W.sum(dim=1)  # [bs, num]
         W_edge = F.normalize(W_edge, dim=1)
@@ -504,7 +510,8 @@ class feature_aggregation_layer(nn.Module):
                 # aggregation message from v to e
                 feature = vertex_feat.permute(0, 2, 1)  # [bs, num, dim]
                 feature = torch.bmm(incidence.permute(0, 2, 1), feature)
-                edge_feat_out = torch.bmm(inv_edge_degree, feature)
+                # Element-wise multiply instead of bmm (inv_edge_degree is [bs, num, 1])
+                edge_feat_out = feature * inv_edge_degree
 
                 if edge_feat is not None:
                     edge_feat_out = self.mlp(torch.cat((edge_feat, edge_feat_out.permute(0, 2, 1)), dim=1)).permute(0, 2,
@@ -515,7 +522,8 @@ class feature_aggregation_layer(nn.Module):
 
                 # aggregation message from e to v
                 feature = torch.bmm(incidence, feature)
-                feature = torch.bmm(inv_vertex_degree, feature)
+                # Element-wise multiply instead of bmm
+                feature = feature * inv_vertex_degree
 
                 vertex_feat_out = feature.permute(0, 2, 1)  # [bs, dim, num]
                 edge_feat_out = edge_feat_out.permute(0, 2, 1)
@@ -524,14 +532,16 @@ class feature_aggregation_layer(nn.Module):
                 # e->v nonlocal net using weight matrix W
                 feature = vertex_feat.permute(0, 2, 1)
                 feature = torch.bmm(incidence.permute(0, 2, 1), feature)  # H^T=H
-                edge_feat_out = torch.bmm(inv_edge_degree, feature)  # [bs, num, dim]
+                # Element-wise multiply instead of bmm
+                edge_feat_out = feature * inv_edge_degree  # [bs, num, dim]
 
                 feat = edge_feat_out.permute(0, 2, 1)  # [bs, dim, num]
                 score = torch.softmax(self.fc(feat).permute(0, 2, 1), dim=1)  # [bs, num, 1]
                 feature = score * edge_scale * feature
 
                 feature = torch.bmm(incidence, feature)
-                feature = torch.bmm(inv_vertex_degree, feature)
+                # Element-wise multiply instead of bmm
+                feature = feature * inv_vertex_degree
 
                 vertex_feat_out = feature.permute(0, 2, 1)
                 edge_feat_out = edge_feat_out.permute(0, 2, 1)
@@ -540,12 +550,13 @@ class feature_aggregation_layer(nn.Module):
                 # v->e: Use Wasserstein aggregation - OPTIMIZED
                 vertex_feat_t = vertex_feat.permute(0, 2, 1)  # [bs, num_nodes, dim]
                 
-                # CRITICAL FIX: Cap memberships per vertex to prevent OOM
-                k_edges = min(20, num_nodes)  # Keep top-k strongest edges per vertex
-                top_k_values, top_k_indices = torch.topk(incidence, k=k_edges, dim=2, largest=True, sorted=False)
-                top_k_mask = torch.zeros_like(incidence, dtype=torch.bool)
+                # CRITICAL FIX: Cap memberships per vertex using EDGE_WEIGHT not binarized incidence
+                # This selects the most meaningful edges, not random ties from 0/1 matrix
+                k_edges = min(8, num_nodes)  # Keep top-k strongest edges per vertex (reduced for memory)
+                top_k_values, top_k_indices = torch.topk(edge_weight, k=k_edges, dim=2, largest=True, sorted=False)
+                top_k_mask = torch.zeros_like(edge_weight, dtype=torch.bool)
                 top_k_mask.scatter_(2, top_k_indices, True)
-                incidence_sparse = incidence * top_k_mask  # Zero out non-top-k entries
+                incidence_sparse = incidence * top_k_mask  # Apply mask to binarized incidence
                 
                 # Free intermediate tensors
                 del top_k_values, top_k_indices, top_k_mask
@@ -696,16 +707,16 @@ class HGNN(nn.Module):
         incidence = edge_weight.clone()  # Clone to avoid modifying input
         incidence[incidence > 0] = 1.0
         # 2. Degree of V, E.
-        degree = incidence.sum(dim=1)
+        degree = incidence.sum(dim=1)  # [bs, num_points]
 
         raw_incidence = incidence.clone()  # Keep a copy
-        D = torch.diag_embed(degree)  # torch.sparse_matrix
-        del degree  # Free after use
-        
-        inv_edge_degree = D ** -1
-        inv_edge_degree[torch.isinf(inv_edge_degree)] = 0
+        # Compute inverse degrees as vectors, not full diagonal matrices
+        inv_degree_vec = 1.0 / (degree + 1e-10)  # [bs, num_points]
+        inv_degree_vec[torch.isinf(inv_degree_vec)] = 0
+        # Store as [bs, num_points, 1] for broadcasting in bmm
+        inv_edge_degree = inv_degree_vec.unsqueeze(-1)
         inv_vertex_degree = inv_edge_degree  # The initial incidence matrix is symmetric
-        del D  # Free after use
+        del degree, inv_degree_vec  # Free after use
 
         # 3. edge weight = sum(W, dim=0)
         edge_scale = edge_weight.sum(dim=1)  # [bs, num]
@@ -788,6 +799,10 @@ class MethodName(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, input_data):
+        # Clear cache to reduce fragmentation at start of forward pass
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         corr, src_pts, tgt_pts, src_normal, tgt_normal = (
             input_data['corr_pos'], input_data['src_keypts'], input_data['tgt_keypts'], input_data['src_normal'],
             input_data['tgt_normal'])
@@ -796,15 +811,26 @@ class MethodName(nn.Module):
         FCG_K = int(num_corr * 0.1)
         
         with torch.no_grad():
-            # pairwise distance compute
-
-            src_dist = ((src_pts[:, :, None, :] - src_pts[:, None, :, :]) ** 2).sum(-1) ** 0.5
-            tgt_dist = ((tgt_pts[:, :, None, :] - tgt_pts[:, None, :, :]) ** 2).sum(-1) ** 0.5
-
-            pairwise_dist = src_dist - tgt_dist
-            del src_dist, tgt_dist
-            FCG = torch.clamp(1 - pairwise_dist ** 2 / self.sigma_d ** 2, min=0)
-            del pairwise_dist
+            # Compute pairwise distances in chunks to avoid OOM
+            # Instead of creating [bs, num_corr, num_corr] all at once
+            chunk_size = 128  # Process 128 correspondences at a time
+            FCG = torch.zeros(bs, num_corr, num_corr, device=src_pts.device, dtype=src_pts.dtype)
+            
+            for start_idx in range(0, num_corr, chunk_size):
+                end_idx = min(start_idx + chunk_size, num_corr)
+                
+                # Compute distances for chunk: [bs, chunk, num_corr]
+                src_chunk = src_pts[:, start_idx:end_idx, None, :]  # [bs, chunk, 1, 3]
+                src_dist_chunk = ((src_chunk - src_pts[:, None, :, :]) ** 2).sum(-1) ** 0.5
+                
+                tgt_chunk = tgt_pts[:, start_idx:end_idx, None, :]
+                tgt_dist_chunk = ((tgt_chunk - tgt_pts[:, None, :, :]) ** 2).sum(-1) ** 0.5
+                
+                pairwise_dist_chunk = src_dist_chunk - tgt_dist_chunk
+                FCG[:, start_idx:end_idx, :] = torch.clamp(1 - pairwise_dist_chunk ** 2 / self.sigma_d ** 2, min=0)
+                
+                del src_chunk, src_dist_chunk, tgt_chunk, tgt_dist_chunk, pairwise_dist_chunk
+            
             FCG[:, torch.arange(FCG.shape[1]), torch.arange(FCG.shape[1])] = 0
 
             # Remain top matches for each row
