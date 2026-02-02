@@ -396,9 +396,9 @@ class HGNN(nn.Module):
         return raw_incidence, incidence, edge_score, feat
 
 
-class MethodName(nn.Module):
+class HyperGCT(nn.Module):
     def __init__(self, config):
-        super(MethodName, self).__init__()
+        super(HyperGCT, self).__init__()
         self.config = config
         self.inlier_threshold = config.inlier_threshold
         self.num_iterations = 10
