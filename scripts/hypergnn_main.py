@@ -16,7 +16,7 @@ from project.models.hypergnn.loss import (
     SpectralMatchingLoss,
     TransformationLoss,
 )
-from project.models.hypergnn.model import HGNN, MethodName
+from project.models.hypergnn.model import HGNN, HyperGCT
 from project.runners.hypergnn_trainer import Trainer
 
 
@@ -182,7 +182,7 @@ def build_dataloaders(args):
 
 
 def build_model(args):
-    model = MethodName(args)
+    model = HyperGCT(args)
     corr_feat_dim = 6 + (2 * args.feature_dim if args.use_features else 0)
     if corr_feat_dim != 6:
         model.encoder = HGNN(n_emb_dims=model.num_channels, in_channel=corr_feat_dim)
