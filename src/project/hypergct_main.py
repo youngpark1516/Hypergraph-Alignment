@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
 from project.config.hypergct_config import get_config
 from project.models.hypergct.loss import (
@@ -17,8 +17,8 @@ from project.models.hypergct.loss import (
     TransformationLoss,
 )
 from project.models.hypergct.model import HGNN, HyperGCT
-from project.runners.hypergct_trainer import Trainer
-from project.models.hypergct.dataset import PartNetRigidDataset
+from project.trainers.hypergct_trainer import Trainer
+from project.dataset import AlignmentDataset
 
 def build_dataloaders(args):
     root = Path(args.root)
@@ -35,7 +35,7 @@ def build_dataloaders(args):
     val_files = [files[i] for i in indices[split:]]
 
     include_gt_trans = not args.skip_gt_trans
-    train_set = PartNetRigidDataset(
+    train_set = AlignmentDataset(
         train_files,
         num_corr=args.num_node,
         use_features=args.use_features,
@@ -44,7 +44,7 @@ def build_dataloaders(args):
         include_gt_trans=include_gt_trans,
         seed=args.split_seed,
     )
-    val_set = PartNetRigidDataset(
+    val_set = AlignmentDataset(
         val_files,
         num_corr=args.num_node,
         use_features=args.use_features,

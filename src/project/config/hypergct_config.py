@@ -16,8 +16,6 @@ def add_argument_group(name):
 def str2bool(v):
     return v.lower() in ('true', '1')
 
-
-dataset = 'partnet'
 config_dir = Path(__file__).resolve().parent
 dataset_configs = {
     'partnet': config_dir / 'hypergct_partnet.yaml',
@@ -25,17 +23,6 @@ dataset_configs = {
     '3DMatch': config_dir / 'hypergct_3dmatch.yaml',
     'KITTI': config_dir / 'hypergct_kitti.yaml',
 }
-experiment_id = f"HyperGCT_{dataset}_{time.strftime('%m%d%H%M')}"
-default_snapshot_dir = f'snapshot/{experiment_id}'
-default_tboard_dir = f'tensorboard/{experiment_id}'
-default_save_dir = os.path.join(default_snapshot_dir, 'models/')
-# snapshot configurations
-snapshot_arg = add_argument_group('Snapshot')
-snapshot_arg.add_argument('--exp_id', type=str, default=f'{experiment_id}')
-snapshot_arg.add_argument('--snapshot_dir', type=str, default=default_snapshot_dir)
-snapshot_arg.add_argument('--tboard_dir', type=str, default=default_tboard_dir)
-snapshot_arg.add_argument('--snapshot_interval', type=int, default=1)
-snapshot_arg.add_argument('--save_dir', type=str, default=default_save_dir)
 
 # Loss configurations
 loss_arg = add_argument_group('Loss')
@@ -62,7 +49,7 @@ opt_arg.add_argument('--scheduler_interval', type=int, default=1)
 
 # Dataset and dataloader configurations
 data_arg = add_argument_group('Data')
-data_arg.add_argument('--dataset', type=str, default=dataset, choices=sorted(dataset_configs.keys()))
+data_arg.add_argument('--dataset', type=str, choices=sorted(dataset_configs.keys()))
 data_arg.add_argument('--root', type=str, default='data_utils/partnet/output/fpfh_rigid')
 data_arg.add_argument('--descriptor', type=str, default='fpfh', choices=['fpfh', 'fcgf'])
 data_arg.add_argument('--inlier_threshold', type=float, default=0.10)
@@ -97,9 +84,16 @@ misc_arg.add_argument('--split_seed', type=int, default=0)
 misc_arg.add_argument('--use_wandb', action='store_true')
 misc_arg.add_argument('--wandb_project', type=str, default='3d-alignment')
 misc_arg.add_argument('--wandb_entity', type=str, default='')
-misc_arg.add_argument('--wandb_run_name', type=str, default=experiment_id)
+misc_arg.add_argument('--wandb_run_name', type=str, default=None)
 misc_arg.add_argument('--config', type=str, default='')
 
+# snapshot configurations
+snapshot_arg = add_argument_group('Snapshot')
+snapshot_arg.add_argument('--exp_id', type=str, default=None)
+snapshot_arg.add_argument('--snapshot_dir', type=str, default=None)
+snapshot_arg.add_argument('--tboard_dir', type=str, default=None)
+snapshot_arg.add_argument('--snapshot_interval', type=int, default=1)
+snapshot_arg.add_argument('--save_dir', type=str, default=None)
 
 def get_config():
     from project.utils.io import load_yaml
@@ -117,7 +111,18 @@ def get_config():
 
     args = parser.parse_args()
     args.config = str(config_path) if config_path else ''
-    if args.dataset != dataset and args.exp_id == experiment_id:
+    experiment_id = f"HyperGCT_{args.dataset}_{time.strftime('%m%d%H%M')}"
+    default_snapshot_dir = f'snapshot/{experiment_id}'
+    default_tboard_dir = f'tensorboard/{experiment_id}'
+    default_save_dir = os.path.join(default_snapshot_dir, 'models/')
+
+    args.exp_id = args.exp_id or experiment_id
+    args.snapshot_dir = args.snapshot_dir or default_snapshot_dir
+    args.tboard_dir = args.tboard_dir or default_tboard_dir
+    args.save_dir = args.save_dir or default_save_dir
+    args.wandb_run_name = args.wandb_run_name or args.exp_id
+
+    if args.dataset != args.dataset and args.exp_id == experiment_id:
         new_exp_id = f"HyperGCT_{args.dataset}_{time.strftime('%m%d%H%M')}"
         args.exp_id = new_exp_id
         if args.snapshot_dir == default_snapshot_dir:

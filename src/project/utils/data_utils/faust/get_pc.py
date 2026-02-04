@@ -51,8 +51,8 @@ def process_split(raw_root: Path, out_root: Path, split: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Convert FAUST .ply scans to .npy point clouds")
-    parser.add_argument("--raw-root", type=Path, default=Path("data/raw/MPI-FAUST"), help="Root of FAUST raw files")
-    parser.add_argument("--out-root", type=Path, default=Path("point_clouds/faust"), help="Output root for .npy point clouds")
+    parser.add_argument("--raw-root", type=Path, default=Path("data/faust"), help="Root of FAUST raw files")
+    parser.add_argument("--out-root", type=Path, default=Path("data/faust/point_clouds"), help="Output root for .npy point clouds")
     parser.add_argument("--splits", type=str, default="train,test", help="Comma-separated splits to process (train,test,val)")
     args = parser.parse_args()
 

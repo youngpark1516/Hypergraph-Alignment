@@ -4,7 +4,7 @@ import torch
 
 from project.utils.build_correspondences import fpfh_knn_correspondences
 
-class PartNetRigidDataset(Dataset):
+class AlignmentDataset(Dataset):
     def __init__(
         self,
         files,
