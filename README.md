@@ -34,6 +34,8 @@ data/
 `-- partnet/
     |-- affine_1-5/
     |-- affine_2-0/
+    |-- fpfh_rigid/
+    |-- fpfh_affine_1-5/
     |-- fpfh_affine_2-0/
     |-- point_clouds/
     `-- rigid/
