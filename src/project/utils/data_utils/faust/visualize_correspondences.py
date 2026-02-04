@@ -58,7 +58,7 @@ def sample_line_pairs(points_a: np.ndarray, points_b: np.ndarray, frac: float, r
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize FAUST correspondences from a paired .npz")
-    parser.add_argument("pair", type=Path, help="Path to .npz produced by data_utils/faust/align.py")
+    parser.add_argument("pair", type=Path, help="Path to .npz files")
     parser.add_argument("--fraction", type=float, default=0.001, help="Fraction of xyz0 indices to sample")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for sampling")
     parser.add_argument(

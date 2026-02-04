@@ -50,7 +50,7 @@ opt_arg.add_argument('--scheduler_interval', type=int, default=1)
 # Dataset and dataloader configurations
 data_arg = add_argument_group('Data')
 data_arg.add_argument('--dataset', type=str, choices=sorted(dataset_configs.keys()))
-data_arg.add_argument('--root', type=str, default='data_utils/partnet/output/fpfh_rigid')
+data_arg.add_argument('--root', type=str, default='data/partnet/fpfh_rigid')
 data_arg.add_argument('--descriptor', type=str, default='fpfh', choices=['fpfh', 'fcgf'])
 data_arg.add_argument('--inlier_threshold', type=float, default=0.10)
 data_arg.add_argument('--downsample', type=float, default=0.02)

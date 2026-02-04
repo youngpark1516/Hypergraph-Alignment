@@ -1,5 +1,5 @@
 dataset: partnet
-root: data_utils/partnet/output/fpfh_rigid
+root: data/partnet/fpfh_rigid
 descriptor: fpfh
 inlier_threshold: 0.10
 downsample: 0.02
