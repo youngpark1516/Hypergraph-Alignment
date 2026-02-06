@@ -12,6 +12,35 @@ Datasets: DeformingThings4D, FAUST, SAPIEN/PartNet-Mobility.
 - `paper/` — paper source + figures
 - `demo/` — demo notebook / assets
 
+## Data layout
+Directory structure under `data/` (folders only):
+```text
+data/
+|-- faust/
+|   |-- corres/
+|   |   |-- maps/
+|   |   `-- pairs/
+|   |-- fpfh/
+|   |-- point_clouds/
+|   |   |-- test/
+|   |   `-- train/
+|   |-- test/
+|   |   |-- challenge_pairs/
+|   |   `-- scans/
+|   `-- training/
+|       |-- ground_truth_vertices/
+|       |-- registrations/
+|       `-- scans/
+`-- partnet/
+    |-- affine_1-5/
+    |-- affine_2-0/
+    |-- fpfh_rigid/
+    |-- fpfh_affine_1-5/
+    |-- fpfh_affine_2-0/
+    |-- point_clouds/
+    `-- rigid/
+```
+
 ## Setup
 Create the environment (edit as needed):
 - `conda env create -f environment.yml`

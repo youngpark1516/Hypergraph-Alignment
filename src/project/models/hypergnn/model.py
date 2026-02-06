@@ -5,69 +5,9 @@ from torch.nn import Linear
 import torch.nn.functional as F
 from project.utils.SE3 import transform, integrate_trans
 from project.utils.timer import Timer
+from project.models.hypergnn.pooling import FPSWE_pool
 import math
-from torch_scatter import scatter_add
-
-
-def sparse_sort(values, index):
-    """
-    Sort values within groups - GPU-native, robust gap
-    """
-    device = values.device
-    N, num_proj = values.shape
-    
-    # Keep on GPU, avoid .item() sync. Make gap robust for fp16/bf16
-    vmin = values.amin()  # GPU tensor
-    vmax = values.amax()  # GPU tensor
-    gap = (vmax - vmin) + 1.0  # Larger margin for numerical safety
-    
-    # Normalize values to [0, gap) then add group offset
-    normalized_values = values - vmin
-    # Use fp32 for sort keys if index is large to avoid precision loss
-    sort_keys = index[:, None].float() * gap.float() + normalized_values.float()
-    
-    # Sort all projections at once
-    sorted_keys, sort_idx = torch.sort(sort_keys, dim=0)
-    
-    # Gather sorted values
-    sorted_values = torch.gather(values, 0, sort_idx)
-    
-    del sort_keys, normalized_values
-    return sorted_values, sort_idx
-
-
-def interp1d(x, y, xnew, ynew, index):
-    """
-    Proper linear interpolation using searchsorted - process per projection to save memory
-    """
-    num_proj, M = xnew.shape
-    num_proj, N = x.shape
-    
-    # Process each projection separately to keep memory manageable
-    for proj_idx in range(num_proj):
-        x_proj = x[proj_idx]  # [N]
-        y_proj = y[proj_idx]  # [N]
-        xnew_proj = xnew[proj_idx]  # [M]
-        
-        # Use searchsorted to find interpolation indices
-        # This finds where each xnew value would be inserted in sorted x
-        indices = torch.searchsorted(x_proj.contiguous(), xnew_proj.contiguous())
-        indices = torch.clamp(indices, 1, N-1)  # Clamp to valid range
-        
-        # Get bracketing points for linear interpolation
-        x0 = x_proj[indices - 1]
-        x1 = x_proj[indices]
-        y0 = y_proj[indices - 1]
-        y1 = y_proj[indices]
-        
-        # Linear interpolation: y = y0 + (y1-y0) * (x-x0)/(x1-x0)
-        alpha = (xnew_proj - x0) / (x1 - x0 + 1e-10)
-        ynew[proj_idx] = y0 + alpha * (y1 - y0)
-        
-        del x_proj, y_proj, xnew_proj, indices, x0, x1, y0, y1, alpha
-    
-    return ynew
-
+import time
 
 def distance(x):  # bs, channel, num_points
     inner = -2 * torch.matmul(x.transpose(2, 1).contiguous(), x)
@@ -464,13 +404,6 @@ class feature_aggregation_layer(nn.Module):
                 nn.LeakyReLU(inplace=True, negative_slope=0.2),
                 nn.Conv1d(num_channels // 4, 1, kernel_size=1),
             )
-        elif self.aggr == 'wasserstein':
-            # Use much smaller parameters for GPU memory efficiency
-            self.v2e_pool = FPSWE_pool(d_in=num_channels, num_anchors=16, num_projections=32, anch_freeze=True)
-            self.e2v_pool = FPSWE_pool(d_in=num_channels, num_anchors=16, num_projections=32, anch_freeze=True)
-            # Project back to num_channels
-            self.v2e_proj = nn.Linear(32, num_channels)
-            self.e2v_proj = nn.Linear(32, num_channels)
 
     def forward(self, vertex_feat, edge_feat, edge_weight, incidence, inv_edge_degree, inv_vertex_degree, 
                 edge_scale, knn_k):
@@ -547,107 +480,178 @@ class feature_aggregation_layer(nn.Module):
                 vertex_feat_out = feature.permute(0, 2, 1)
                 edge_feat_out = edge_feat_out.permute(0, 2, 1)
 
-            elif self.aggr == 'wasserstein':
-                # v->e: Use Wasserstein aggregation - OPTIMIZED
-                vertex_feat_t = vertex_feat.permute(0, 2, 1)  # [bs, num_nodes, dim]
-                
-                # CRITICAL FIX: Cap memberships per vertex using EDGE_WEIGHT not binarized incidence
-                # This selects the most meaningful edges, not random ties from 0/1 matrix
-                k_edges = min(8, num_nodes)  # Keep top-k strongest edges per vertex (reduced for memory)
-                top_k_values, top_k_indices = torch.topk(edge_weight, k=k_edges, dim=2, largest=True, sorted=False)
-                top_k_mask = torch.zeros_like(edge_weight, dtype=torch.bool)
-                top_k_mask.scatter_(2, top_k_indices, True)
-                incidence_sparse = incidence * top_k_mask  # Apply mask to binarized incidence
-                
-                # Free intermediate tensors
-                del top_k_values, top_k_indices, top_k_mask
-                
-                # v->e: Find all (batch, vertex, edge) tuples where incidence > 0
-                nonzero_mask = incidence_sparse > 0  # [bs, num_nodes, num_nodes]
-                batch_idx, vertex_idx, edge_idx = torch.nonzero(nonzero_mask, as_tuple=True)
-                
-                # Create global indices by adding batch offsets
-                global_vertex_idx = batch_idx * num_nodes + vertex_idx
-                global_edge_idx = batch_idx * num_nodes + edge_idx
-                
-                # Free indices we don't need anymore
-                del batch_idx, vertex_idx, edge_idx
-                
-                # Gather vertex features for all connections across all batches
-                vertex_feat_flat = vertex_feat_t.reshape(batch_size * num_nodes, num_channels)
-                vertex_feat_expanded = vertex_feat_flat[global_vertex_idx]  # [total_connections, dim]
-                
-                # Free intermediate tensors
-                del vertex_feat_flat, global_vertex_idx
-                
-                # Wasserstein pooling with global edge indices - returns compact output
-                edge_feat_compact, edge_indices = self.v2e_pool(vertex_feat_expanded, global_edge_idx)  # [num_edges, 32]
-                del vertex_feat_expanded, global_edge_idx
-                
-                edge_feat_compact = self.v2e_proj(edge_feat_compact)  # [num_edges, num_channels]
-                
-                # Map compact output back to full [bs*num_nodes] space
-                edge_feat_pooled = torch.zeros(batch_size * num_nodes, num_channels,
-                                               device=edge_feat_compact.device, dtype=edge_feat_compact.dtype)
-                edge_feat_pooled[edge_indices] = edge_feat_compact
-                del edge_feat_compact, edge_indices
-                
-                # Reshape back to batch
-                edge_feat_out = edge_feat_pooled.reshape(batch_size, num_nodes, num_channels)
-                del edge_feat_pooled
-                
-                if edge_feat is not None:
-                    edge_feat_out = self.mlp(torch.cat((edge_feat, edge_feat_out.permute(0, 2, 1)), dim=1)).permute(0, 2, 1)
-                
-                # e->v: Use Wasserstein aggregation from edges to vertices
-                feature = edge_scale * edge_feat_out  # [bs, num_nodes, dim]
-                
-                # e->v: Find all (batch, edge, vertex) tuples (transpose of incidence)
-                batch_idx, edge_idx, vertex_idx = torch.nonzero(nonzero_mask.transpose(1, 2), as_tuple=True)
-                del nonzero_mask, incidence_sparse  # Free sparse incidence
-                
-                # Create global indices
-                global_edge_idx = batch_idx * num_nodes + edge_idx
-                global_vertex_idx = batch_idx * num_nodes + vertex_idx
-                del batch_idx, edge_idx, vertex_idx
-                
-                # Gather edge features for all connections across all batches
-                feature_flat = feature.reshape(batch_size * num_nodes, num_channels)
-                feature_expanded = feature_flat[global_edge_idx]  # [total_connections, dim]
-                
-                # Free intermediate tensors
-                del feature_flat, global_edge_idx
-                
-                # Wasserstein pooling with global vertex indices - returns compact output
-                vertex_feat_compact, vertex_indices = self.e2v_pool(feature_expanded, global_vertex_idx)  # [num_vertices, 32]
-                del feature_expanded, global_vertex_idx
-                
-                vertex_feat_compact = self.e2v_proj(vertex_feat_compact)  # [num_vertices, num_channels]
-                
-                # Map compact output back to full [bs*num_nodes] space
-                vertex_feat_pooled = torch.zeros(batch_size * num_nodes, num_channels,
-                                                 device=vertex_feat_compact.device, dtype=vertex_feat_compact.dtype)
-                vertex_feat_pooled[vertex_indices] = vertex_feat_compact
-                del vertex_feat_compact, vertex_indices
-                
-                # Reshape back to batch
-                vertex_feat_out = vertex_feat_pooled.reshape(batch_size, num_nodes, num_channels).permute(0, 2, 1)
-                del vertex_feat_pooled
-                
-                edge_feat_out = edge_feat_out.permute(0, 2, 1)
-
             else:
                 raise NotImplementedError
 
         return vertex_feat_out, edge_feat_out
 
+class WHNN_aggregation_layer(nn.Module):
+    """
+    Feature aggregation using FPSWE pooling (WHNN-style).
+    Returns (vertex_feat_out, edge_feat_out) with shapes [bs, C, N].
+    """
+
+    def __init__(self, num_channels=64, num_anchors=128, num_projections=32, anch_freeze=True, topk_per_vertex=2):
+        super(WHNN_aggregation_layer, self).__init__()
+        self.num_channels = num_channels
+        self.num_projections = num_projections
+        self.topk_per_vertex = topk_per_vertex
+        self.pool_v2e = FPSWE_pool(
+            d_in=num_channels,
+            num_anchors=num_anchors,
+            num_projections=num_projections,
+            anch_freeze=anch_freeze,
+        )
+        self.pool_e2v = FPSWE_pool(
+            d_in=num_channels,
+            num_anchors=num_anchors,
+            num_projections=num_projections,
+            anch_freeze=anch_freeze,
+        )
+        if num_projections == num_channels:
+            self.edge_proj = nn.Identity()
+            self.vertex_proj = nn.Identity()
+        else:
+            self.edge_proj = nn.Conv1d(num_projections, num_channels, kernel_size=1, bias=False)
+            self.vertex_proj = nn.Conv1d(num_projections, num_channels, kernel_size=1, bias=False)
+        self.mlp = nn.Sequential(
+            nn.Conv1d(2 * num_channels, num_channels, kernel_size=1),
+            nn.BatchNorm1d(num_channels),
+            nn.LeakyReLU(inplace=True, negative_slope=0.2),
+        )
+
+    def _build_incidence_index(self, incidence, edge_weight):
+        # incidence/edge_weight: [N, N] dense; keep top-k per vertex
+        scores = edge_weight if edge_weight is not None else incidence
+        if incidence is not None:
+            scores = scores.masked_fill(incidence <= 0, float("-inf"))
+        num_nodes = scores.size(0)
+        k = min(self.topk_per_vertex, scores.size(1))
+        if k <= 0:
+            return None, None
+        _, topk_idx = torch.topk(scores, k=k, dim=1)
+        mask = torch.zeros_like(scores, dtype=torch.bool)
+        row_idx = torch.arange(num_nodes, device=scores.device).unsqueeze(1).expand(-1, k)
+        mask[row_idx, topk_idx] = True
+        # if incidence is not None:
+        mask = mask & (incidence > 0)
+        idx = mask.nonzero(as_tuple=False)
+        if idx.numel() == 0:
+            return None, None
+        edge_counts = torch.bincount(idx[:, 1], minlength=num_nodes)
+        valid_edges = edge_counts > 1
+        keep = valid_edges[idx[:, 1]]
+        idx = idx[keep]
+        if idx.numel() == 0:
+            return None, None
+        return idx[:, 0], idx[:, 1]
+
+    def _pool_grouped(self, X, group_index, num_groups, pool):
+        # X: [M, C], group_index: [M] with values in [0, num_groups)
+        if X.numel() == 0:
+            return X.new_zeros((num_groups, self.num_projections))
+        pooled, groups = pool(X, group_index)
+        out = X.new_zeros((num_groups, pooled.size(-1)))
+        out[groups] = pooled
+        return out
+
+    def forward(
+        self,
+        vertex_feat,
+        edge_feat,
+        edge_weight,
+        incidence,
+        inv_edge_degree,
+        inv_vertex_degree,
+        edge_scale,
+        knn_k,
+    ):
+        # Keep signature aligned with feature_aggregation_layer; unused args are ignored.
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+        batch_size, num_channels, num_nodes = vertex_feat.size()
+        vertex_out_list = []
+        edge_out_list = []
+
+        for b in range(batch_size):
+            incidence_b = incidence[b]
+            v_idx, e_idx = self._build_incidence_index(incidence_b, edge_weight[b] if edge_weight is not None else None)
+            if v_idx is None:
+                edge_out_b = vertex_feat.new_zeros((num_nodes, num_channels))
+                vertex_out_b = vertex_feat.new_zeros((num_nodes, num_channels))
+                edge_out_list.append(edge_out_b)
+                vertex_out_list.append(vertex_out_b)
+                continue
+            edge_sizes = torch.bincount(e_idx, minlength=num_nodes)
+            edge_sizes = edge_sizes[edge_sizes > 0]
+            print(
+                f"[WHNN] batch {b}: hyperedges={edge_sizes.numel()}, "
+                f"size mean={edge_sizes.float().mean().item():.2f}, size std={edge_sizes.float().std().item():.2f}"
+            )
+
+            # V -> E pooling: group by edge index
+            v_feat_b = vertex_feat[b].transpose(0, 1)  # [N, C]
+            v_samples = v_feat_b.index_select(0, v_idx)  # [M, C]
+            edge_out_b = self._pool_grouped(v_samples, e_idx, num_nodes, self.pool_v2e)
+            edge_out_list.append(edge_out_b)
+
+        edge_feat_out = torch.stack(edge_out_list, dim=0).permute(0, 2, 1)  # [bs, P, N]
+        edge_feat_out = self.edge_proj(edge_feat_out)
+
+        if edge_feat is not None:
+            edge_feat_out = self.mlp(torch.cat((edge_feat, edge_feat_out), dim=1))
+
+        for b in range(batch_size):
+            incidence_b = incidence[b]
+            v_idx, e_idx = self._build_incidence_index(incidence_b, edge_weight[b] if edge_weight is not None else None)
+            if v_idx is None:
+                vertex_out_b = vertex_feat.new_zeros((num_nodes, num_channels))
+                vertex_out_list.append(vertex_out_b)
+                continue
+
+            # E -> V pooling: group by vertex index
+            e_feat_b = edge_feat_out[b].transpose(0, 1)  # [N, C]
+            e_samples = e_feat_b.index_select(0, e_idx)  # [M, C]
+
+            if edge_scale is not None:
+                scale_b = edge_scale[b].index_select(0, e_idx)  # [M, 1]
+                e_samples = e_samples * scale_b
+
+            vertex_out_b = self._pool_grouped(e_samples, v_idx, num_nodes, self.pool_e2v)
+            vertex_out_list.append(vertex_out_b)
+
+        vertex_feat_out = torch.stack(vertex_out_list, dim=0).permute(0, 2, 1)  # [bs, P, N]
+        vertex_feat_out = self.vertex_proj(vertex_feat_out)
+        return vertex_feat_out, edge_feat_out
+
 
 class HGNN_layer(nn.Module):
-    def __init__(self, in_channels, out_channels, residual_connection=False, use_edge_feature=True, aggr='mean'):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        residual_connection=False,
+        use_edge_feature=True,
+        use_whnn=False,
+        whnn_num_anchors=128,
+        whnn_num_projections=32,
+        whnn_anch_freeze=True,
+        whnn_topk_per_vertex=2,
+    ):
         super(HGNN_layer, self).__init__()
         self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=1, bias=False)
         self.bn = nn.BatchNorm1d(out_channels)
-        self.feat_agg = feature_aggregation_layer(k=20, num_channels=out_channels, aggr=aggr)
+        if use_whnn:
+            self.feat_agg = WHNN_aggregation_layer(
+                num_channels=in_channels,
+                num_anchors=whnn_num_anchors,
+                num_projections=whnn_num_projections,
+                anch_freeze=whnn_anch_freeze,
+                topk_per_vertex=whnn_topk_per_vertex,
+            )
+        else:
+            self.feat_agg = feature_aggregation_layer(k=20, num_channels=in_channels)
         self.residual_connection = residual_connection
         self.use_edge_feature = use_edge_feature
 
@@ -695,9 +699,12 @@ class HGNN(nn.Module):
         self.layer0 = nn.Conv1d(in_channel, dim[0], kernel_size=1, bias=True)
         self.blocks = nn.ModuleDict()
         for i in range(num_layers):
-            # Use Wasserstein only in the last layer, mean for all others
-            layer_aggr = aggr if i == num_layers - 1 else 'mean'
-            self.blocks[f'GNN_layer_{i}'] = HGNN_layer(in_channels=dim[i], out_channels=dim[i + 1], aggr=layer_aggr)
+            use_whnn = i == num_layers - 1
+            self.blocks[f'GNN_layer_{i}'] = HGNN_layer(
+                in_channels=dim[i],
+                out_channels=dim[i + 1],
+                use_whnn=use_whnn,
+            )
             self.blocks[f'NonLocal_{i}'] = NonLocalBlock(dim[i + 1])
             if i < num_layers - 1:
                 self.blocks[f'update_graph_{i}'] = GraphUpdate(num_channels=128, num_heads=1, num_layer=self.num_layers)
@@ -771,9 +778,9 @@ class HGNN(nn.Module):
         return raw_incidence, raw_incidence.clone(), edge_score, feat
 
 
-class MethodName(nn.Module):
+class HyperGCT(nn.Module):
     def __init__(self, config):
-        super(MethodName, self).__init__()
+        super(HyperGCT, self).__init__()
         self.config = config
         self.inlier_threshold = config.inlier_threshold
         self.num_iterations = 10

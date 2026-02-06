@@ -150,8 +150,8 @@ def build_all_pairs(raw_root: Path, out_root: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Build FAUST template->scan maps and per-pair correspondences")
-    parser.add_argument("--raw-root", type=Path, default=Path("data/raw/MPI-FAUST"))
-    parser.add_argument("--out-root", type=Path, default=Path("data/processed/faust/corres"))
+    parser.add_argument("--raw-root", type=Path, default=Path("data/faust"))
+    parser.add_argument("--out-root", type=Path, default=Path("data/faust/corres"))
     parser.add_argument("--build-maps", action="store_true")
     parser.add_argument("--build-pair", nargs=2, help="Build a single pair: provide two zero-padded ids (e.g. 000 001)")
     parser.add_argument("--build-all-pairs", action="store_true", help="Build correspondences for all unordered training pairs")

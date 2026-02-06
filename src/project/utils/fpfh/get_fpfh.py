@@ -132,8 +132,8 @@ def process_partnet(
     affine_whiten=False,
     affine_whiten_k=10,
 ):
-    pair_root = pair_root or "data_utils/partnet/output/rigid_pc"
-    save_root = save_root or "data_utils/partnet/output/fpfh_rigid"
+    pair_root = pair_root
+    save_root = save_root
     os.makedirs(save_root, exist_ok=True)
 
     pair_files = sorted(glob.glob(os.path.join(pair_root, "**", "*.npz"), recursive=True))
@@ -153,16 +153,16 @@ def process_partnet(
 
 
 def process_faust(
+    pair_root,
+    save_root,
     voxel_size=0.02,
-    pair_root=None,
-    save_root=None,
     downsample=True,
     interp_k=1,
     affine_whiten=False,
     affine_whiten_k=10,
 ):
-    pair_root = pair_root or "data_utils/faust/data/processed/faust/corres/pairs"
-    save_root = save_root or "data_utils/faust/data/processed/faust/fpfh"
+    assert pair_root is not None, "pair_root must be specified for FAUST dataset."
+    assert save_root is not None, "save_root must be specified for FAUST dataset."
     os.makedirs(save_root, exist_ok=True)
 
     pair_files = sorted(glob.glob(os.path.join(pair_root, "*.npz")))

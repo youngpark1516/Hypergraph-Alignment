@@ -8,6 +8,84 @@ from tqdm import tqdm
 
 from project.utils.timer import AverageMeter, Timer
 
+def disjointness_from_w(W, eps=1e-8):
+    """
+    Compute per-batch disjointness from vertex-hyperedge membership scores.
+
+    Args:
+        W: Tensor of shape (B, V, E) or (V, E) with nonnegative memberships.
+        eps: Small constant to avoid division by zero.
+
+    Returns:
+        Tensor of shape (B,) (or scalar if input is 2D) with mean disjointness.
+    """
+    if W.dim() == 2:
+        W = W.unsqueeze(0)
+    if W.dim() != 3:
+        raise ValueError(f"W must have shape (B, V, E) or (V, E), got {W.shape}")
+    W_sum = W.sum(dim=-1)
+    W_max = W.max(dim=-1).values
+    disjointness_per_vertex = W_max / (W_sum + eps)
+    return disjointness_per_vertex.mean(dim=-1)
+
+def weighted_pair_distance_var(W, src_pts, tgt_pts, eps=1e-8):
+    """
+    Compute weighted variance of pairwise src-tgt distances per hyperedge.
+
+    Args:
+        W: Tensor of shape (B, V, E) or (V, E) with nonnegative memberships.
+        src_pts: Tensor of shape (B, V, 3) or (V, 3).
+        tgt_pts: Tensor of shape (B, V, 3) or (V, 3).
+        eps: Small constant to avoid division by zero.
+
+    Returns:
+        Tensor of shape (B,) (or scalar if inputs are 2D) with mean variance across hyperedges.
+    """
+    if W.dim() == 2:
+        W = W.unsqueeze(0)
+    if src_pts.dim() == 2:
+        src_pts = src_pts.unsqueeze(0)
+    if tgt_pts.dim() == 2:
+        tgt_pts = tgt_pts.unsqueeze(0)
+    if W.dim() != 3:
+        raise ValueError(f"W must have shape (B, V, E) or (V, E), got {W.shape}")
+    if src_pts.shape[:2] != W.shape[:2] or tgt_pts.shape[:2] != W.shape[:2]:
+        raise ValueError("src_pts/tgt_pts must align with W on (B, V) dimensions")
+
+    distances = torch.norm(src_pts - tgt_pts, dim=-1)  # (B, V)
+    w_sum = W.sum(dim=1)  # (B, E)
+    w_mean = (W * distances.unsqueeze(-1)).sum(dim=1) / (w_sum + eps)  # (B, E)
+    centered = distances.unsqueeze(-1) - w_mean.unsqueeze(1)  # (B, V, E)
+    w_var = (W * centered ** 2).sum(dim=1) / (w_sum + eps)  # (B, E)
+    return w_var.mean(dim=-1)
+
+def aggregatedness_from_w(W, eps=1e-8):
+    """
+    Entropy-based aggregatedness from dominant hyperedge assignments.
+
+    Args:
+        W: Tensor of shape (B, V, E) or (V, E) with nonnegative memberships.
+        eps: Small constant to avoid division by zero/log(0).
+
+    Returns:
+        Tensor of shape (B,) (or scalar if input is 2D) in [0, 1] when E>1.
+    """
+    if W.dim() == 2:
+        W = W.unsqueeze(0)
+    if W.dim() != 3:
+        raise ValueError(f"W must have shape (B, V, E) or (V, E), got {W.shape}")
+    B, V, E = W.shape
+    if E <= 1:
+        return W.new_zeros((B,))
+
+    dominant = torch.argmax(W, dim=-1)  # (B, V)
+    counts = torch.zeros((B, E), device=W.device, dtype=W.dtype)
+    counts.scatter_add_(1, dominant, torch.ones_like(dominant, dtype=W.dtype))
+    p = counts / (counts.sum(dim=1, keepdim=True) + eps)
+    entropy = -(p * torch.log(p + eps)).sum(dim=1)
+    aggregatedness = 1.0 - entropy / np.log(E)
+    return aggregatedness
+
 class Trainer(object):
     def __init__(self, args):
         # parameters
@@ -196,7 +274,7 @@ class Trainer(object):
 
             model_timer.tic()
             # forward
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
             res = self.model(data)
             pred_trans, pred_labels = res['final_trans'], res['final_labels']
             # classification loss
@@ -245,6 +323,8 @@ class Trainer(object):
             if do_step is True:
                 self.optimizer.step()
             model_timer.toc()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             if not np.isnan(float(loss)):
                 for key in meter_list:
@@ -280,8 +360,9 @@ class Trainer(object):
 
         # create meters and timers
         meter_list = ['class_loss', 'sm_loss', 'reg_recall', 'graph_loss', 're', 'te', 'precision', 'recall', 'f1']
+        score_list = ['disjointness', 'edge_distance_var', 'aggregatedness']
         meter_dict = {}
-        for key in meter_list:
+        for key in meter_list + score_list:
             meter_dict[key] = AverageMeter()
         data_timer, model_timer = Timer(), Timer()
 
@@ -318,24 +399,39 @@ class Trainer(object):
 
             model_timer.tic()
             # forward
-            res = self.model(data)
-            pred_trans, pred_labels = res['final_trans'], res['final_labels']
-            # classification loss
-            class_stats = self.evaluate_metric['ClassificationLoss'](pred_labels, gt_labels)
-            class_loss = class_stats['loss']
-            # spectral matching loss
-            sm_loss = self.evaluate_metric['SpectralMatchingLoss'](res['M'], gt_labels)
+            with torch.no_grad():
+                res = self.model(data)
+                pred_trans, pred_labels = res['final_trans'], res['final_labels']
+                score_mat = res.get("edge_score")
+                if score_mat is None:
+                    score_mat = res.get("W")
+                if score_mat is not None:
+                    disjointness = disjointness_from_w(score_mat).mean().item()
+                    edge_dist_var = weighted_pair_distance_var(
+                        score_mat, src_keypts, tgt_keypts
+                    ).mean().item()
+                    aggregatedness = aggregatedness_from_w(score_mat).mean().item()
+                    meter_dict['disjointness'].update(disjointness)
+                    meter_dict['edge_distance_var'].update(edge_dist_var)
+                    meter_dict['aggregatedness'].update(aggregatedness)
+                # classification loss
+                class_stats = self.evaluate_metric['ClassificationLoss'](pred_labels, gt_labels)
+                class_loss = class_stats['loss']
+                # spectral matching loss
+                sm_loss = self.evaluate_metric['SpectralMatchingLoss'](res['M'], gt_labels)
 
-            # hypergraph loss
-            graph_loss = self.evaluate_metric['HypergraphLoss'](res['edge_score'], res['raw_H'], gt_labels)
-            # transformation loss
-            if gt_trans is not None:
-                reg_recall, re, te, rmse = self.evaluate_metric['TransformationLoss'](
-                    pred_trans, gt_trans, src_keypts, tgt_keypts, pred_labels
-                )
-            else:
-                reg_recall, re, te, rmse = 0.0, 0.0, 0.0, 0.0
+                # hypergraph loss
+                graph_loss = self.evaluate_metric['HypergraphLoss'](res['edge_score'], res['raw_H'], gt_labels)
+                # transformation loss
+                if gt_trans is not None:
+                    reg_recall, re, te, rmse = self.evaluate_metric['TransformationLoss'](
+                        pred_trans, gt_trans, src_keypts, tgt_keypts, pred_labels
+                    )
+                else:
+                    reg_recall, re, te, rmse = 0.0, 0.0, 0.0, 0.0
             model_timer.toc()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             stats = {
                 'class_loss': float(class_loss),
@@ -364,6 +460,8 @@ class Trainer(object):
             self.writer.add_scalar(f"Val/{key}", meter_dict[key].avg, epoch)
         if self.use_wandb:
             log_dict = {f"val/{key}": meter_dict[key].avg for key in meter_list}
+            for key in ['disjointness', 'edge_distance_var', 'aggregatedness']:
+                log_dict[f"val/{key}"] = meter_dict[key].avg
             log_dict["val/step"] = epoch
             self.wandb.log(log_dict)
 

@@ -1,5 +1,5 @@
 dataset: partnet
-root: data_utils/partnet/output/fpfh_rigid
+root: data/partnet/fpfh_rigid
 descriptor: fpfh
 inlier_threshold: 0.10
 downsample: 0.02
@@ -10,8 +10,8 @@ use_features: true
 feature_dim: 33
 neg_ratio: 2.0
 seed_ratio: 0.2
-num_node: 256
-batch_size: 1
-num_workers: 4
+num_node: 512
+batch_size: 2
+num_workers: 12
 skip_gt_trans: true
 aggregation: wasserstein
