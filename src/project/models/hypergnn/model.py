@@ -5,7 +5,8 @@ from torch.nn import Linear
 import torch.nn.functional as F
 from project.utils.SE3 import transform, integrate_trans
 from project.utils.timer import Timer
-from project.models.hypergnn.pooling import FPSWE_pool
+from project.models.hypergnn.pooling import FPSWE_pool, interp1d, sparse_sort
+from torch_scatter import scatter_add
 import math
 import time
 
@@ -336,7 +337,7 @@ class FPSWE_pool(nn.Module):
         y = torch.transpose(Xslices_sorted, 0, 1).reshape(self.num_projections, -1)
         
         # interpolate y based on the x values
-        Xslices_sorted_interpolated = interp1d(x, y, xnew, ynew, hyperedge_index_1_sorted).view(self.num_projections, -1)
+        Xslices_sorted_interpolated = interp1d(x, y, xnew, hyperedge_index_1_sorted).view(self.num_projections, -1)
         Xslices_sorted_interpolated = torch.transpose(Xslices_sorted_interpolated, 0, 1)
 
         # reshape the (projected) references. no need for projection since we sample them already projected
@@ -585,10 +586,10 @@ class WHNN_aggregation_layer(nn.Module):
                 continue
             edge_sizes = torch.bincount(e_idx, minlength=num_nodes)
             edge_sizes = edge_sizes[edge_sizes > 0]
-            print(
-                f"[WHNN] batch {b}: hyperedges={edge_sizes.numel()}, "
-                f"size mean={edge_sizes.float().mean().item():.2f}, size std={edge_sizes.float().std().item():.2f}"
-            )
+            # print(
+            #     f"[WHNN] batch {b}: hyperedges={edge_sizes.numel()}, "
+            #     f"size mean={edge_sizes.float().mean().item():.2f}, size std={edge_sizes.float().std().item():.2f}"
+            # )
 
             # V -> E pooling: group by edge index
             v_feat_b = vertex_feat[b].transpose(0, 1)  # [N, C]
@@ -699,7 +700,8 @@ class HGNN(nn.Module):
         self.layer0 = nn.Conv1d(in_channel, dim[0], kernel_size=1, bias=True)
         self.blocks = nn.ModuleDict()
         for i in range(num_layers):
-            use_whnn = i == num_layers - 1
+            # use_whnn = i == num_layers - 1
+            use_whnn = i == 0
             self.blocks[f'GNN_layer_{i}'] = HGNN_layer(
                 in_channels=dim[i],
                 out_channels=dim[i + 1],

@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
-from project.dataset import AlignmentDataset
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from project.dataset import AlignmentDataset
 from project.config.hypergnn_config import get_config
 from project.models.hypergnn.loss import (
     ClassificationLoss,
