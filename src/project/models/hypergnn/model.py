@@ -30,7 +30,7 @@ def mask_score(score, H0, iter, num_layer, choice='topk'):
         H = torch.where(torch.greater(W, 0), H0, torch.zeros_like(H0))
 
     elif choice == 'topk':
-        k = round(num * 0.1 * (num_layer - 1 - iter))
+        k = max(1, round(num * 0.1 * (num_layer - 1 - iter)))  # Ensure k >= 1
         topk, _ = torch.topk(score, k=k, dim=-1)  # 每个节点选出topk概率的超边，该超边包含该节点
         a_min = torch.min(topk, dim=-1).values.unsqueeze(-1).repeat(1, 1, num)
         W = torch.where(torch.greater_equal(score, a_min), score, torch.zeros_like(score))
@@ -55,6 +55,7 @@ def kabsch(A, B, weights=None, weight_threshold=0):
     if weights is None:
         weights = torch.ones_like(A[:, :, 0])
     weights[weights < weight_threshold] = 0
+    # weights = weights / (torch.sum(weights, dim=-1, keepdim=True) + 1e-6)
 
     # find mean of point cloud
     centroid_A = torch.sum(A * weights[:, :, None], dim=1, keepdim=True) / (torch.sum(weights, dim=1, keepdim=True)[:, :, None] + 1e-6)
@@ -121,35 +122,39 @@ class GraphUpdate(nn.Module):
         bs, num_vertices, _ = H0.size()
         Q = self.projection_q(vertex_feat).view([bs, self.head, self.num_channels // self.head, num_vertices])  # row
         K = self.projection_k(edge_feat).view([bs, self.head, self.num_channels // self.head, num_vertices])  # col
-        # if self.make_score_choice != 'topk':
-        #     V = None
-        # else:
-        #     V = self.projection_v(edge_feat).view([bs, self.head, self.num_channels // self.head, num_vertices])
 
-        attention = torch.einsum('bhco, bhci->bhoi', Q, K) / (self.num_channels // self.head) ** 0.5  # [bs,
-        # head, num_corr, num_corr]
+        attention = torch.einsum('bhco, bhci->bhoi', Q, K) / (self.num_channels // self.head) ** 0.5
+        
+        # Free Q, K immediately after use
+        del Q, K
 
         # mask attention using SC2 prior
         attention_mask = 1 - H0  # Fix the hypergraph
         attention_mask = attention_mask.masked_fill(attention_mask.bool(), -1e9)
-        score = torch.sigmoid(attention + attention_mask[:, None, :, :])  
-            # [bs, head, num_corr, num_corr] row->V, col->E, Prob(v in e) Softmax over col
-        # if V is not None:
-        #     edge_message = torch.einsum('bhoi, bhci-> bhco', score, V).reshape([bs, -1, num_vertices])  # [bs, dim, num_corr]
+        score = torch.sigmoid(attention + attention_mask[:, None, :, :])
+        
+        # Free attention and mask after use
+        del attention, attention_mask
 
         score = (torch.sum(score, dim=1) / self.head).view(bs, num_vertices, num_vertices)  # Mean over heads
         H, W = mask_score(score, H0, iter, self.num_layer, choice=self.make_score_choice)
+        
+        # Free score after mask_score
+        del score
 
         # update D_n_1, W_edge according to new H
-        degree_E = H.sum(dim=1)
-        De = torch.diag_embed(degree_E)  # torch.sparse_matrix
-        De_n_1 = De ** -1
-        De_n_1[torch.isinf(De_n_1)] = 0
+        degree_E = H.sum(dim=1)  # [bs, num_vertices]
+        # Compute inverse degrees as vectors
+        inv_deg_E = 1.0 / (degree_E + 1e-10)
+        inv_deg_E[torch.isinf(inv_deg_E)] = 0
+        De_n_1 = inv_deg_E.unsqueeze(-1)  # [bs, num_vertices, 1]
 
-        degree_V = H.sum(dim=2)
-        Dv = torch.diag_embed(degree_V)
-        Dv_n_1 = Dv ** -1
-        Dv_n_1[torch.isinf(Dv_n_1)] = 0
+        degree_V = H.sum(dim=2)  # [bs, num_vertices]
+        inv_deg_V = 1.0 / (degree_V + 1e-10)
+        inv_deg_V[torch.isinf(inv_deg_V)] = 0
+        Dv_n_1 = inv_deg_V.unsqueeze(-1)  # [bs, num_vertices, 1]
+        
+        del degree_E, degree_V, inv_deg_E, inv_deg_V
 
         W_edge = W.sum(dim=1)  # [bs, num]
         W_edge = F.normalize(W_edge, dim=1)
@@ -199,6 +204,179 @@ class NonLocalBlock(nn.Module):
         message = self.fc_message(message)
         res = feat + message
         return res
+
+
+class FPSWE_pool(nn.Module):
+    def __init__(self, d_in, num_anchors=1024, num_projections=1024, anch_freeze=True, out_type='linear'):
+        '''
+        The PSWE and LPSWE module that produces 
+        fixed-dimensional permutation-invariant embeddings 
+        for input sets of arbitrary size.
+        '''
+
+        super(FPSWE_pool, self).__init__()
+        self.d_in = d_in # the dimensionality of the space that each set sample belongs to
+        self.num_ref_points = num_anchors # number of points in the reference set
+        self.num_projections = num_projections # number of slices
+        self.anch_freeze = anch_freeze # if True the reference set and the theta are not learnable
+
+        uniform_ref = torch.linspace(-1, 1, num_anchors).unsqueeze(1).repeat(1, num_projections) #num_anchors x num_preojections
+        self.reference = nn.Parameter(uniform_ref, requires_grad=not self.anch_freeze)
+
+        # slicer
+        self.theta = nn.utils.weight_norm(nn.Linear(d_in, num_projections, bias=False), dim=0)
+        if num_projections <= d_in:
+            nn.init.eye_(self.theta.weight_v)
+        else:
+            nn.init.normal_(self.theta.weight_v)
+        self.theta.weight_v.requires_grad = not self.anch_freeze
+
+        self.theta.weight_g.data = torch.ones_like(self.theta.weight_g.data)
+        self.theta.weight_g.requires_grad = False
+
+        # weights to reduce the output embedding dimensionality
+        self.weight = nn.Parameter(torch.zeros(num_projections, num_anchors))
+        nn.init.xavier_uniform_(self.weight)
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.weight)
+        device = self.weight.device
+
+        if self.anch_freeze == False:
+            uniform_ref = torch.linspace(-1, 1, self.num_ref_points).unsqueeze(1).repeat(1, self.num_projections).to(device) #num_anchors x num_preojections
+            self.reference.data = uniform_ref
+
+        if self.num_projections <= self.d_in:
+            nn.init.eye_(self.theta.weight_v)
+        else:
+            nn.init.normal_(self.theta.weight_v)
+        
+
+    def double_self_loops(self, features, index):
+        '''
+        for the isolated nodes double them because pooling only works
+            for minimum 2 elements in a set
+        '''
+        # Find indices where the group appears only once
+        counts = torch.bincount(index)
+        unique_mask = counts[index] == 1
+
+        # Get elements to be duplicated
+        unique_features = features[unique_mask]
+        unique_groups = index[unique_mask]
+        
+        # Stack original tensor with duplicated unique elements
+        new_features = torch.cat((features, unique_features), dim=0)
+        new_index = torch.cat((index, unique_groups), dim=0)
+        
+        # Cleanup intermediate tensors
+        del counts, unique_mask, unique_features, unique_groups
+        
+        return new_features, new_index
+
+    def forward(self, X, hyperedge_index, data=None, name=None):
+        '''
+        Calculates GSW between two empirical distributions.
+        Note that the number of samples is assumed to be equal
+        (This is however not necessary and could be easily extended
+        for empirical distributions with different number of samples)
+        Input:
+            X:  N x dn tensor containing N samples in a dn-dimensional space
+        Output:
+            weighted_embeddings: E x num_projections tensor, containing an embedding of dimension "num_projections" (i.e., number of slices)
+        '''
+   
+        # Step 1: project samples into the 1D slices
+        N, dn = X.shape
+        Xslices = self.get_slice(X) # N x num_projections
+
+        # for the self-loops double the node to be able to apply the pooling 
+        Xslices, hyperedge_index_new = self.double_self_loops(Xslices, hyperedge_index)
+        Xslices_sorted, Xind = sparse_sort(Xslices, hyperedge_index_new)
+
+        # regardless of the column sorting, all of them should have the same resorted index
+        hyperedge_index_1_sorted = hyperedge_index_new[Xind[:,0]]
+        M, dm = self.reference.shape
+
+        eps = 0.00001
+        #this should allow a correct interpolation when M>N
+        margin_up = 0.9999
+        assert (margin_up+eps < 1)
+
+        # Compute constants for this forward pass (no caching to support varying batch structures)
+        deg_helper = torch.ones_like(hyperedge_index_1_sorted)
+        R = torch.arange(hyperedge_index_1_sorted.shape[0]).to(X.device).to(X.dtype)+1
+        pad = torch.tensor([0.0]).to(X.device)
+        edges = torch.sort(torch.unique(hyperedge_index_1_sorted))[0]
+        hyperedge_index_anchors_1 = edges.repeat_interleave(M)
+        num_edges = edges.shape[0]
+        xnew = torch.linspace(0, 1, M).repeat(num_edges).to(X.device).to(X.dtype)
+        xnew = xnew * 0.99998+eps
+
+        ynew = torch.zeros((self.num_projections, M*num_edges)).to(X.device)
+
+        # compute the degree
+        D1 = scatter_add(deg_helper, hyperedge_index_1_sorted) #E
+        D = torch.index_select(D1, 0,  hyperedge_index_1_sorted)
+
+        # Step 2: interpolate 
+
+        # compute the x indices to be used as positions for interpolation
+        # they are computer for each hyperedge in parallel and are uniformly arranged
+        ptr = torch.cat((pad,torch.cumsum(D1, dim=0)))
+        P = torch.index_select(ptr, 0,  hyperedge_index_1_sorted)
+        assert (D.min() >= 2)
+        x = (R-P-1)/(D-1)*0.99999+eps +hyperedge_index_1_sorted
+        x = x.unsqueeze(0).repeat(self.num_projections, 1)
+
+        xnew = xnew + hyperedge_index_anchors_1
+        xnew = xnew.unsqueeze(0).repeat(self.num_projections, 1)
+
+        #this still correspond to hyperedge_index_1_sorted
+        y = torch.transpose(Xslices_sorted, 0, 1).reshape(self.num_projections, -1)
+        
+        # interpolate y based on the x values
+        Xslices_sorted_interpolated = interp1d(x, y, xnew, ynew, hyperedge_index_1_sorted).view(self.num_projections, -1)
+        Xslices_sorted_interpolated = torch.transpose(Xslices_sorted_interpolated, 0, 1)
+
+        # reshape the (projected) references. no need for projection since we sample them already projected
+        Rslices = self.reference.unsqueeze(0).repeat(num_edges,1,1)#.to(X.device) # num_edges x M x num_projections
+        Rslices = Rslices.reshape(num_edges*M,-1) # num_edges x  x num_projections
+
+        # Step 3: sort references and compute proper Wasserstein distance
+        _, Rind = sparse_sort(Rslices, hyperedge_index_anchors_1)
+        
+        # Compute distance between sorted samples (this IS the 1D Wasserstein distance)
+        embeddings = Rslices - torch.gather(Xslices_sorted_interpolated, dim=0, index=Rind)
+        del Rind, Rslices, Xslices_sorted_interpolated  # Free immediately
+        
+        embeddings = embeddings.transpose(0, 1)  # [num_projections, num_edges*M]
+        embeddings = embeddings.reshape(self.num_projections, num_edges, M)  # [num_projections, num_edges, M]
+        
+        # Step 4: weighted sum (learned weights are important for Wasserstein!)
+        w = self.weight.unsqueeze(1).repeat(1, num_edges, 1)  # [num_projections, num_edges, M]
+        weighted_embeddings = (w * embeddings).mean(-1)  # [num_projections, num_edges]
+        del w, embeddings  # Free
+        
+        out = weighted_embeddings.transpose(0, 1)  # [num_edges, num_projections]
+        del weighted_embeddings
+        
+        # Cleanup remaining tensors
+        del Xslices, Xslices_sorted, Xind, hyperedge_index_new, hyperedge_index_1_sorted
+        del deg_helper, R, pad, hyperedge_index_anchors_1, xnew, ynew
+        del D1, D, ptr, P, x, y
+        
+        # Return compact output - caller handles index mapping
+        return out.contiguous(), edges
+        
+
+    def get_slice(self, X):
+        '''
+        Slices samples from distribution X~P_X
+        Input:
+            X:  B x N x dn tensor, containing a batch of B sets, each containing N samples in a dn-dimensional space
+        '''
+        return self.theta(X)
 
 
 class feature_aggregation_layer(nn.Module):
@@ -266,7 +444,8 @@ class feature_aggregation_layer(nn.Module):
                 # aggregation message from v to e
                 feature = vertex_feat.permute(0, 2, 1)  # [bs, num, dim]
                 feature = torch.bmm(incidence.permute(0, 2, 1), feature)
-                edge_feat_out = torch.bmm(inv_edge_degree, feature)
+                # Element-wise multiply instead of bmm (inv_edge_degree is [bs, num, 1])
+                edge_feat_out = feature * inv_edge_degree
 
                 if edge_feat is not None:
                     edge_feat_out = self.mlp(torch.cat((edge_feat, edge_feat_out.permute(0, 2, 1)), dim=1)).permute(0, 2,
@@ -277,7 +456,8 @@ class feature_aggregation_layer(nn.Module):
 
                 # aggregation message from e to v
                 feature = torch.bmm(incidence, feature)
-                feature = torch.bmm(inv_vertex_degree, feature)
+                # Element-wise multiply instead of bmm
+                feature = feature * inv_vertex_degree
 
                 vertex_feat_out = feature.permute(0, 2, 1)  # [bs, dim, num]
                 edge_feat_out = edge_feat_out.permute(0, 2, 1)
@@ -286,14 +466,16 @@ class feature_aggregation_layer(nn.Module):
                 # e->v nonlocal net using weight matrix W
                 feature = vertex_feat.permute(0, 2, 1)
                 feature = torch.bmm(incidence.permute(0, 2, 1), feature)  # H^T=H
-                edge_feat_out = torch.bmm(inv_edge_degree, feature)  # [bs, num, dim]
+                # Element-wise multiply instead of bmm
+                edge_feat_out = feature * inv_edge_degree  # [bs, num, dim]
 
                 feat = edge_feat_out.permute(0, 2, 1)  # [bs, dim, num]
                 score = torch.softmax(self.fc(feat).permute(0, 2, 1), dim=1)  # [bs, num, 1]
                 feature = score * edge_scale * feature
 
                 feature = torch.bmm(incidence, feature)
-                feature = torch.bmm(inv_vertex_degree, feature)
+                # Element-wise multiply instead of bmm
+                feature = feature * inv_vertex_degree
 
                 vertex_feat_out = feature.permute(0, 2, 1)
                 edge_feat_out = edge_feat_out.permute(0, 2, 1)
@@ -481,11 +663,17 @@ class HGNN_layer(nn.Module):
             # vertex_feat_out: feature of vertex in n+1 layer; edge_feat_out: feature of edge in n layer
         # update feature of vertex. self.conv is a linear layer over channel dimension
         if self.residual_connection:
-            vertex_feat = vertex_feat_out * (1 - alpha) + alpha * vertex_feat0
-            vertex_feat = (1 - theta) * vertex_feat + theta * self.bn(self.conv(vertex_feat)) 
+            vertex_feat_residual = vertex_feat_out * (1 - alpha) + alpha * vertex_feat0
+            vertex_feat = (1 - theta) * vertex_feat_residual + theta * self.bn(self.conv(vertex_feat_residual))
+            del vertex_feat_residual
         else:  
-            vertex_feat = self.bn(self.conv(vertex_feat_out)) + vertex_feat
+            vertex_feat_conv = self.bn(self.conv(vertex_feat_out))
+            vertex_feat = vertex_feat_conv + vertex_feat
+            del vertex_feat_conv
+        
+        del vertex_feat_out  # Free after use
         vertex_feat = F.leaky_relu(vertex_feat, negative_slope=0.2)
+        
         if not self.use_edge_feature:
             edge_feat_out = None
         return vertex_feat, edge_feat_out
@@ -497,13 +685,15 @@ class HGNN(nn.Module):
                  k=20,
                  num_layers=6,
                  lamda=0.5,
-                 alpha=0.1):
+                 alpha=0.1,
+                 aggr='wasserstein'):
         super(HGNN, self).__init__()
         self.k = k
         self.lamda = lamda
         self.alpha = alpha
         self.num_layers = num_layers
         self.change_H0 = False
+        self.aggr = aggr
         dim = [n_emb_dims, n_emb_dims, n_emb_dims, n_emb_dims, n_emb_dims, n_emb_dims,
                n_emb_dims]
         self.layer0 = nn.Conv1d(in_channel, dim[0], kernel_size=1, bias=True)
@@ -524,18 +714,19 @@ class HGNN(nn.Module):
         batch_size, num_dims, num_points = vertex_feat.size()  # bs, 12, num_corr
 
         # 1. edge_weight[edge_weight>0] = 1
-        incidence = edge_weight
+        incidence = edge_weight.clone()  # Clone to avoid modifying input
         incidence[incidence > 0] = 1.0
         # 2. Degree of V, E.
-        degree = incidence.sum(dim=1)
-        # mask = torch.zeros_like(degree).to(vertex_feat.device)
-        # mask[degree > 0] = 1 
+        degree = incidence.sum(dim=1)  # [bs, num_points]
 
-        raw_incidence = incidence
-        D = torch.diag_embed(degree)  # torch.sparse_matrix
-        inv_edge_degree = D ** -1
-        inv_edge_degree[torch.isinf(inv_edge_degree)] = 0
+        raw_incidence = incidence.clone()  # Keep a copy
+        # Compute inverse degrees as vectors, not full diagonal matrices
+        inv_degree_vec = 1.0 / (degree + 1e-10)  # [bs, num_points]
+        inv_degree_vec[torch.isinf(inv_degree_vec)] = 0
+        # Store as [bs, num_points, 1] for broadcasting in bmm
+        inv_edge_degree = inv_degree_vec.unsqueeze(-1)
         inv_vertex_degree = inv_edge_degree  # The initial incidence matrix is symmetric
+        del degree, inv_degree_vec  # Free after use
 
         # 3. edge weight = sum(W, dim=0)
         edge_scale = edge_weight.sum(dim=1)  # [bs, num]
@@ -543,23 +734,48 @@ class HGNN(nn.Module):
         edge_scale = edge_scale.view([batch_size, num_points, 1])
 
         feat = self.layer0(vertex_feat)
-        feat0 = feat
+        feat0 = feat.clone()  # Keep initial features
         edge_feat = None
+        
         for i in range(self.num_layers):
             theta = math.log(self.lamda / (i + 1) + 1)
+            
+            # Store previous features for cleanup
+            feat_prev = feat
+            edge_feat_prev = edge_feat
+            
             feat, edge_feat = self.blocks[f'GNN_layer_{i}'](feat, edge_feat, edge_weight, incidence, 
                                                             inv_edge_degree, inv_vertex_degree, edge_scale, 
                                                             self.alpha, theta, feat0, self.k)
+            
+            # Free previous layer's features
+            if i > 0:
+                del feat_prev
+                if edge_feat_prev is not None:
+                    del edge_feat_prev
+            
             feat = self.blocks[f'NonLocal_{i}'](feat, edge_weight, raw_incidence)
             feat = F.normalize(feat, p=2, dim=1)
-            edge_feat = F.normalize(edge_feat, p=2, dim=1)
+            if edge_feat is not None:
+                edge_feat = F.normalize(edge_feat, p=2, dim=1)
+            
             # change hypergraph dynamically
             if i < self.num_layers - 1:
-                incidence, edge_score, inv_edge_degree, inv_vertex_degree, edge_scale = self.blocks[f'update_graph_{i}'](incidence, feat, edge_feat,
-                                                                                         i)
-                #edge_score_list.append(edge_score)
-                #H_list.append(H)
-        return raw_incidence, incidence, edge_score, feat
+                # Store old values for cleanup
+                old_incidence = incidence
+                old_inv_edge_degree = inv_edge_degree
+                old_inv_vertex_degree = inv_vertex_degree
+                old_edge_scale = edge_scale
+                
+                incidence, edge_score, inv_edge_degree, inv_vertex_degree, edge_scale = self.blocks[f'update_graph_{i}'](incidence, feat, edge_feat, i)
+                
+                # Free old values
+                del old_incidence, old_inv_edge_degree, old_inv_vertex_degree, old_edge_scale
+        
+        # Final cleanup
+        del feat0, inv_edge_degree, inv_vertex_degree, edge_scale, incidence
+        
+        return raw_incidence, raw_incidence.clone(), edge_score, feat
 
 
 class HyperGCT(nn.Module):
@@ -601,15 +817,26 @@ class HyperGCT(nn.Module):
         FCG_K = int(num_corr * 0.1)
         
         with torch.no_grad():
-            # pairwise distance compute
-
-            src_dist = ((src_pts[:, :, None, :] - src_pts[:, None, :, :]) ** 2).sum(-1) ** 0.5
-            tgt_dist = ((tgt_pts[:, :, None, :] - tgt_pts[:, None, :, :]) ** 2).sum(-1) ** 0.5
-
-            pairwise_dist = src_dist - tgt_dist
-            del src_dist, tgt_dist
-            FCG = torch.clamp(1 - pairwise_dist ** 2 / self.sigma_d ** 2, min=0)
-            del pairwise_dist
+            # Compute pairwise distances in chunks to avoid OOM
+            # Instead of creating [bs, num_corr, num_corr] all at once
+            chunk_size = 128  # Process 128 correspondences at a time
+            FCG = torch.zeros(bs, num_corr, num_corr, device=src_pts.device, dtype=src_pts.dtype)
+            
+            for start_idx in range(0, num_corr, chunk_size):
+                end_idx = min(start_idx + chunk_size, num_corr)
+                
+                # Compute distances for chunk: [bs, chunk, num_corr]
+                src_chunk = src_pts[:, start_idx:end_idx, None, :]  # [bs, chunk, 1, 3]
+                src_dist_chunk = ((src_chunk - src_pts[:, None, :, :]) ** 2).sum(-1) ** 0.5
+                
+                tgt_chunk = tgt_pts[:, start_idx:end_idx, None, :]
+                tgt_dist_chunk = ((tgt_chunk - tgt_pts[:, None, :, :]) ** 2).sum(-1) ** 0.5
+                
+                pairwise_dist_chunk = src_dist_chunk - tgt_dist_chunk
+                FCG[:, start_idx:end_idx, :] = torch.clamp(1 - pairwise_dist_chunk ** 2 / self.sigma_d ** 2, min=0)
+                
+                del src_chunk, src_dist_chunk, tgt_chunk, tgt_dist_chunk, pairwise_dist_chunk
+            
             FCG[:, torch.arange(FCG.shape[1]), torch.arange(FCG.shape[1])] = 0
 
             # Remain top matches for each row
@@ -628,6 +855,8 @@ class HyperGCT(nn.Module):
 
         F0 = corr
         raw_H, H, edge_score, corr_feats = self.encoder(F0.permute(0, 2, 1), W)  # bs, dim, num_corr
+        del W, F0  # Free after encoder
+        
         confidence = self.classification(corr_feats).squeeze(1)  # bs, 1, num_corr-> bs, num_corr loss has sigmoid
 
 
@@ -656,9 +885,11 @@ class HyperGCT(nn.Module):
             frag1_warp = transform(src_pts, pred_trans)
             distance = torch.sum((frag1_warp - tgt_pts) ** 2, dim=-1) ** 0.5
             pred_labels = (distance < self.inlier_threshold).float()
+            del frag1_warp, distance  # Free test-only tensors
 
-        if self.config.mode is not "test":
+        if self.config.mode != "test":
             pred_labels = confidence
+        
         res = {
             "raw_H": raw_H,
             "hypergraph": H,
