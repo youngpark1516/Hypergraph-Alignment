@@ -14,4 +14,5 @@ num_node: 512
 batch_size: 2
 num_workers: 12
 skip_gt_trans: true
+pooling_layer_idx: -1
 aggregation: wasserstein

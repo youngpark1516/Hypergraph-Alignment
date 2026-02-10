@@ -47,6 +47,7 @@ opt_arg.add_argument('--momentum', type=float, default=0.9)
 opt_arg.add_argument('--scheduler', type=str, default='ExpLR')
 opt_arg.add_argument('--scheduler_gamma', type=float, default=0.99)
 opt_arg.add_argument('--scheduler_interval', type=int, default=1)
+opt_arg.add_argument('--pooling_layer_idx', type=int, default=-1, help='which layer to apply wasserstein pooling, -1 for the last layer')
 
 # Dataset and dataloader configurations
 data_arg = add_argument_group('Data')
