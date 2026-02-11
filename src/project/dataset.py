@@ -82,6 +82,8 @@ class AlignmentDataset(Dataset):
         tgt_keypts = xyz1[all_tgt_idx]
         src_normal = normal0[all_src_idx]
         tgt_normal = normal1[all_tgt_idx]
+        src_indices = torch.from_numpy(all_src_idx.astype(np.int64))
+        tgt_indices = torch.from_numpy(all_tgt_idx.astype(np.int64))
 
         corr_pos = np.concatenate([src_keypts, tgt_keypts], axis=1)
         if self.use_features:
@@ -94,24 +96,15 @@ class AlignmentDataset(Dataset):
         tgt_normal = torch.from_numpy(tgt_normal)
         gt_labels = torch.from_numpy(gt_labels)
 
-        if self.include_gt_trans:
-            gt_trans = data["gt_trans"].astype(np.float32)
-            gt_trans = torch.from_numpy(gt_trans)
-            return (
-                corr_pos,
-                src_keypts,
-                tgt_keypts,
-                src_normal,
-                tgt_normal,
-                gt_trans,
-                gt_labels,
-            )
-
+        assert not self.include_gt_trans, "include_gt_trans is not supported; expected 9-item batch"
         return (
             corr_pos,
             src_keypts,
             tgt_keypts,
             src_normal,
             tgt_normal,
+            src_indices,
+            tgt_indices,
             gt_labels,
+            str(path),
         )

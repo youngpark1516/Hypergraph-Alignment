@@ -26,6 +26,7 @@ data/
 **/data/
 results/runs/
 checkpoints/
+snapshot/
 *.pt
 *.pth
 *.ckpt

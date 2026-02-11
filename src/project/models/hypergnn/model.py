@@ -688,21 +688,31 @@ class HGNN(nn.Module):
                  num_layers=6,
                  lamda=0.5,
                  alpha=0.1,
-                 pooling_layer_idx=-1,
-                 aggr='wasserstein'):
+                 pooling_layer_idx=-1,):
         super(HGNN, self).__init__()
         self.k = k
         self.lamda = lamda
         self.alpha = alpha
         self.num_layers = num_layers
         self.change_H0 = False
-        self.aggr = aggr
         dim = [n_emb_dims, n_emb_dims, n_emb_dims, n_emb_dims, n_emb_dims, n_emb_dims,
                n_emb_dims]
         self.layer0 = nn.Conv1d(in_channel, dim[0], kernel_size=1, bias=True)
+        if isinstance(pooling_layer_idx, (list, tuple)):
+            pooling_layer_indices = [int(v) for v in pooling_layer_idx]
+        else:
+            pooling_layer_indices = [int(pooling_layer_idx)]
+        normalized_indices = []
+        for idx in pooling_layer_indices:
+            if idx < 0:
+                idx = num_layers - 1
+            if 0 <= idx < num_layers and idx not in normalized_indices:
+                normalized_indices.append(idx)
+        self.pooling_layer_indices = normalized_indices
+
         self.blocks = nn.ModuleDict()
         for i in range(num_layers):
-            use_whnn = i == (pooling_layer_idx if pooling_layer_idx >= 0 else num_layers - 1)
+            use_whnn = i in self.pooling_layer_indices
             self.blocks[f'GNN_layer_{i}'] = HGNN_layer(
                 in_channels=dim[i],
                 out_channels=dim[i + 1],
@@ -862,16 +872,12 @@ class HyperGCT(nn.Module):
         
         confidence = self.classification(corr_feats).squeeze(1)  # bs, 1, num_corr-> bs, num_corr loss has sigmoid
 
-
-        if self.config.mode == "test":
-            M = None
-        else:
-            # M = distance(normed_corr_feats)
-            # construct the feature similarity matrix M for loss calculation
-            M = torch.matmul(corr_feats.permute(0, 2, 1), corr_feats)
-            M = torch.clamp(1 - (1 - M) / self.sigma ** 2, min=0, max=1)
-            # # set diagnal of M to zero
-            M[:, torch.arange(M.shape[1]), torch.arange(M.shape[1])] = 0
+        # M = distance(normed_corr_feats)
+        # construct the feature similarity matrix M for loss calculation
+        M = torch.matmul(corr_feats.permute(0, 2, 1), corr_feats)
+        M = torch.clamp(1 - (1 - M) / self.sigma ** 2, min=0, max=1)
+        # # set diagnal of M to zero
+        M[:, torch.arange(M.shape[1]), torch.arange(M.shape[1])] = 0
 
         if self.config.mode == "test":
             seeds = self.graph_filter(H=H, confidence=confidence, max_num=int(num_corr * self.ratio))
@@ -883,15 +889,15 @@ class HyperGCT(nn.Module):
         sampled_trans = sampled_trans.view([-1, 4, 4])
 
         #post refinement (only used during testing and bs == 1)
-        if self.config.mode == "test":
-            pred_trans = self.post_refinement(H, pred_trans, src_pts, tgt_pts)
-            frag1_warp = transform(src_pts, pred_trans)
-            distance = torch.sum((frag1_warp - tgt_pts) ** 2, dim=-1) ** 0.5
-            pred_labels = (distance < self.inlier_threshold).float()
-            del frag1_warp, distance  # Free test-only tensors
+        # if self.config.mode == "test":
+        #     pred_trans = self.post_refinement(H, pred_trans, src_pts, tgt_pts)
+        #     frag1_warp = transform(src_pts, pred_trans)
+        #     distance = torch.sum((frag1_warp - tgt_pts) ** 2, dim=-1) ** 0.5
+        #     pred_labels = (distance < self.inlier_threshold).float()
+        #     del frag1_warp, distance  # Free test-only tensors
 
-        if self.config.mode != "test":
-            pred_labels = confidence
+        # if self.config.mode != "test":
+        pred_labels = confidence
         
         res = {
             "raw_H": raw_H,
@@ -902,7 +908,8 @@ class HyperGCT(nn.Module):
             "M": M,
             "seeds": seeds,
             "confidence": confidence,
-            "sampled_trans": sampled_trans
+            "sampled_trans": sampled_trans,
+            "corr_feats": corr_feats
         }
         return res
 

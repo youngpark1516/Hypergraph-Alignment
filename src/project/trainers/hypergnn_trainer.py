@@ -1,4 +1,5 @@
 import os
+import csv
 import time
 
 import numpy as np
@@ -7,6 +8,7 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 from project.utils.timer import AverageMeter, Timer
+from project.models.hypothesis_generation import two_stage_spectral_matching_greedy
 
 def disjointness_from_w(W, eps=1e-8):
     """
@@ -111,6 +113,9 @@ class Trainer(object):
         self.force_all_labels = getattr(args, "force_all_labels", False)
         self.skip_gt_trans = getattr(args, "skip_gt_trans", False)
         self.use_wandb = getattr(args, "use_wandb", False)
+        self.mode = args.mode
+        self.generate = getattr(args, "generate", False)
+        self.snapshot_dir = args.snapshot_dir
         self.wandb = None
         self.writer = SummaryWriter(log_dir=args.tboard_dir)
 
@@ -221,10 +226,15 @@ class Trainer(object):
         for iter in range(num_iter):
             data_timer.tic()
             batch = next(trainer_loader_iter)
-            if len(batch) == 7:
-                (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal, gt_trans, gt_labels) = batch
+            file_name = None
+            if len(batch) == 9:
+                (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal,
+                 src_indices, tgt_indices, gt_labels, file_name) = batch
+                gt_trans = None
             elif len(batch) == 6:
                 (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal, gt_labels) = batch
+                src_indices = None
+                tgt_indices = None
                 gt_trans = None
             else:
                 raise ValueError(f"Unexpected batch size: {len(batch)}")
@@ -372,10 +382,15 @@ class Trainer(object):
         for iter in range(num_iter):
             data_timer.tic()
             batch = next(val_loader_iter)
-            if len(batch) == 7:
-                (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal, gt_trans, gt_labels) = batch
+            file_name = None
+            if len(batch) == 9:
+                (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal,
+                 src_indices, tgt_indices, gt_labels, file_name) = batch
+                gt_trans = None
             elif len(batch) == 6:
                 (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal, gt_labels) = batch
+                src_indices = None
+                tgt_indices = None
                 gt_trans = None
             else:
                 raise ValueError(f"Unexpected batch size: {len(batch)}")
@@ -402,6 +417,50 @@ class Trainer(object):
             with torch.no_grad():
                 res = self.model(data)
                 pred_trans, pred_labels = res['final_trans'], res['final_labels']
+                if self.generate:
+                    corr_features = res["corr_feats"].permute(0, 2, 1)
+                    M = res.get("M")
+                    if M is None:
+                        M = torch.matmul(corr_features.permute(0, 2, 1), corr_features)
+                        M = torch.clamp(1 - (1 - M) / self.model.sigma ** 2, min=0, max=1)
+                        M[:, torch.arange(M.shape[1]), torch.arange(M.shape[1])] = 0
+                    bs, num_corr, _ = corr_features.shape
+                    k = min(10, num_corr - 1)
+                    H = res["hypergraph"]
+                    feature_distance = 1 - torch.matmul(corr_features, corr_features.transpose(2, 1))
+                    masked_feature_distance = feature_distance * H.float() + (1 - H.float()) * float(1e9)
+                    knn_idx = torch.topk(masked_feature_distance, k, largest=False)[1]
+
+                    selected_idx, _ = two_stage_spectral_matching_greedy(
+                        M.squeeze(0),
+                        res["seeds"].squeeze(0),
+                        knn_idx.squeeze(0),
+                        num_iterations=self.model.num_iterations,
+                        max_ratio=0.6,
+                        max_ratio_seeds=0.8,
+                    )
+                    print('selected_pairs', f'{selected_idx.size(0)} out of {num_corr}, selected ratio: {selected_idx.size(0) / num_corr:.2f}')
+                    if src_indices is not None and tgt_indices is not None:
+                        selected_idx_cpu = selected_idx.detach().cpu()
+                        src_sel = src_indices.squeeze(0).detach().cpu()[selected_idx_cpu]
+                        tgt_sel = tgt_indices.squeeze(0).detach().cpu()[selected_idx_cpu]
+                        pairs = list(zip(src_sel.tolist(), tgt_sel.tolist()))
+                        stem = None
+                        if file_name is not None:
+                            if isinstance(file_name, (list, tuple)):
+                                file_name = file_name[0]
+                            base = os.path.basename(str(file_name))
+                            stem = os.path.splitext(base)[0]
+                        prefix = stem or f"matching_plan_epoch{epoch}_iter{iter}"
+                        results_dir = os.path.join(self.snapshot_dir, 'matching')
+                        os.makedirs(results_dir, exist_ok=True)
+                        csv_path = os.path.join(results_dir, f"{prefix}.csv")
+                        with open(csv_path, "w", newline="") as f:
+                            writer = csv.writer(f)
+                            writer.writerow(["src_idx", "tgt_idx"])
+                            for s, t in pairs:
+                                writer.writerow([s, t])
+
                 score_mat = res.get("edge_score")
                 if score_mat is None:
                     score_mat = res.get("W")
@@ -474,4 +533,7 @@ class Trainer(object):
     def _load_pretrain(self, pretrain):
         state_dict = torch.load(pretrain, map_location='cpu')
         self.model.load_state_dict(state_dict)
-        self.t.write(f"Load model from {pretrain}.pkl")
+        if self.t is not None:
+            self.t.write(f"Load model from {pretrain}")
+        else:
+            print(f"Load model from {pretrain}")

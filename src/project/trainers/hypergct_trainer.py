@@ -236,10 +236,15 @@ class Trainer(object):
         for iter in range(num_iter):
             data_timer.tic()
             batch = next(trainer_loader_iter)
-            if len(batch) == 7:
-                (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal, gt_trans, gt_labels) = batch
+            file_name = None
+            if len(batch) == 9:
+                (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal,
+                 src_indices, tgt_indices, gt_labels, file_name) = batch
+                gt_trans = None
             elif len(batch) == 6:
                 (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal, gt_labels) = batch
+                src_indices = None
+                tgt_indices = None
                 gt_trans = None
             else:
                 raise ValueError(f"Unexpected batch size: {len(batch)}")
@@ -385,10 +390,15 @@ class Trainer(object):
         for iter in range(num_iter):
             data_timer.tic()
             batch = next(val_loader_iter)
-            if len(batch) == 7:
-                (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal, gt_trans, gt_labels) = batch
+            file_name = None
+            if len(batch) == 9:
+                (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal,
+                 src_indices, tgt_indices, gt_labels, file_name) = batch
+                gt_trans = None
             elif len(batch) == 6:
                 (corr_pos, src_keypts, tgt_keypts, src_normal, tgt_normal, gt_labels) = batch
+                src_indices = None
+                tgt_indices = None
                 gt_trans = None
             else:
                 raise ValueError(f"Unexpected batch size: {len(batch)}")

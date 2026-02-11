@@ -69,6 +69,144 @@ def cal_leading_eigenvector(M, num_iterations, method='power'):
     exit(-1)
 
 
+def spectral_matching_greedy(M, src_idx=None, tgt_idx=None, max_ratio=None, num_iterations=10, method='power'):
+    """
+    Spectral matching (leading eigenvector) + greedy one-to-one selection.
+    Args:
+        M:         [num_corr, num_corr] or [bs, num_corr, num_corr] compatibility matrix
+        src_idx:   [num_corr] source indices for each correspondence
+        tgt_idx:   [num_corr] target indices for each correspondence
+        max_ratio: optional max ratio of matches to return (0..1)
+        num_iterations: power-iteration steps for leading eigenvector
+        method:    'power' or 'eig'
+    Returns:
+        selected_idx: LongTensor [bs, max_len] (padded with -1)
+        selected_mask: BoolTensor [bs, max_len] indicating valid entries
+    """
+    if M.dim() == 3:
+        if M.shape[0] != 1:
+            raise ValueError("Only bs==1 is supported")
+        M = M.squeeze(0)
+    if M.dim() != 2:
+        raise ValueError(f"M must have shape (num_corr, num_corr) (bs==1), got {M.shape}")
+    num_corr = M.shape[0]
+    if src_idx is None:
+        src_idx = torch.arange(num_corr, device=M.device, dtype=torch.long)
+    if tgt_idx is None:
+        tgt_idx = torch.arange(num_corr, device=M.device, dtype=torch.long)
+    if src_idx.numel() != num_corr or tgt_idx.numel() != num_corr:
+        raise ValueError("src_idx/tgt_idx must have length num_corr")
+
+    scores = cal_leading_eigenvector(M.unsqueeze(0), num_iterations, method=method).squeeze(0)  # [num_corr]
+    max_possible = min(int(torch.unique(src_idx).numel()), int(torch.unique(tgt_idx).numel()))
+    if max_ratio is None:
+        max_num = max_possible
+    else:
+        max_num = int(max_possible * max_ratio)
+        if max_ratio > 0 and max_num == 0:
+            max_num = 1
+        max_num = min(max_num, max_possible)
+
+    order = torch.argsort(scores, descending=True)
+    used_src = set()
+    used_tgt = set()
+    picks = []
+    for idx in order.tolist():
+        s = int(src_idx[idx].item())
+        t = int(tgt_idx[idx].item())
+        if s in used_src or t in used_tgt:
+            continue
+        used_src.add(s)
+        used_tgt.add(t)
+        picks.append(idx)
+        if len(picks) >= max_num:
+            break
+
+    if len(picks) == 0:
+        selected_idx = torch.full((0,), -1, device=M.device, dtype=torch.long)
+        selected_mask = torch.zeros((0,), device=M.device, dtype=torch.bool)
+        return selected_idx, selected_mask
+
+    selected_idx = torch.tensor(picks, device=M.device, dtype=torch.long)
+    selected_mask = torch.ones_like(selected_idx, dtype=torch.bool)
+    return selected_idx, selected_mask
+
+
+def two_stage_spectral_matching_greedy(
+    M,
+    seeds,
+    knn_idx,
+    src_idx=None,
+    tgt_idx=None,
+    max_ratio_seeds=None,
+    max_ratio=None,
+    num_iterations=10,
+    method='power',
+):
+    """
+    Two-stage spectral matching with subgraph restriction:
+      1) run spectral matching on seeds only
+      2) expand to all kNN of selected seeds, then run spectral matching again
+    Args:
+        M:         [num_corr, num_corr] or [bs, num_corr, num_corr] compatibility matrix
+        seeds:     [num_seeds] or [bs, num_seeds] seed correspondence indices
+        knn_idx:   [num_corr, k] or [bs, num_corr, k] kNN indices per correspondence
+        src_idx:   [num_corr] optional source indices per correspondence
+        tgt_idx:   [num_corr] optional target indices per correspondence
+        max_ratio_seeds: optional max ratio in stage 1
+        max_ratio: optional max ratio in stage 2
+    Returns:
+        selected_idx: LongTensor [bs, max_len] (padded with -1)
+        selected_mask: BoolTensor [bs, max_len] indicating valid entries
+    """
+    if M.dim() == 3:
+        if M.shape[0] != 1:
+            raise ValueError("Only bs==1 is supported")
+        M = M.squeeze(0)
+    if M.dim() != 2:
+        raise ValueError(f"M must have shape (num_corr, num_corr) (bs==1), got {M.shape}")
+    num_corr = M.shape[0]
+
+    if seeds.dim() != 1 or knn_idx.dim() != 2:
+        raise ValueError("seeds must be [num_seeds] and knn_idx must be [num_corr, k]")
+
+    if src_idx is not None and src_idx.numel() != num_corr:
+        raise ValueError("src_idx must have length num_corr")
+    if tgt_idx is not None and tgt_idx.numel() != num_corr:
+        raise ValueError("tgt_idx must have length num_corr")
+
+    M_seed = M[seeds][:, seeds]
+    src_seed = src_idx[seeds] if src_idx is not None else None
+    tgt_seed = tgt_idx[seeds] if tgt_idx is not None else None
+
+    sel_seed_idx, sel_seed_mask = spectral_matching_greedy(
+        M_seed, src_seed, tgt_seed, max_ratio=max_ratio_seeds,
+        num_iterations=num_iterations, method=method
+    )
+    sel_seed_idx = sel_seed_idx[sel_seed_mask]
+    if sel_seed_idx.numel() == 0:
+        selected_idx = torch.full((0,), -1, device=M.device, dtype=torch.long)
+        selected_mask = torch.zeros((0,), device=M.device, dtype=torch.bool)
+        return selected_idx, selected_mask
+
+    selected_seeds = seeds[sel_seed_idx]
+    neighbors = knn_idx[selected_seeds].reshape(-1)
+    candidates = torch.unique(torch.cat([selected_seeds, neighbors], dim=0))
+
+    M_cand = M[candidates][:, candidates]
+    src_cand = src_idx[candidates] if src_idx is not None else None
+    tgt_cand = tgt_idx[candidates] if tgt_idx is not None else None
+
+    sel_idx, sel_mask = spectral_matching_greedy(
+        M_cand, src_cand, tgt_cand, max_ratio=max_ratio,
+        num_iterations=num_iterations, method=method
+    )
+    sel_idx = sel_idx[sel_mask]
+    selected = candidates[sel_idx]
+    selected_mask = torch.ones_like(selected, dtype=torch.bool)
+    return selected, selected_mask
+
+
 def build_seed_knn_weights(seeds, corr_features, H, src_keypts, tgt_keypts, sigma, sigma_d, num_iterations):
     # 1、Generate initial hypotheses from each seed
     bs, num_corr, num_channels = corr_features.size()
@@ -84,8 +222,8 @@ def build_seed_knn_weights(seeds, corr_features, H, src_keypts, tgt_keypts, sigm
     # construct the feature consistency matrix of each correspondence subset.
     #################################
     knn_features = corr_features.gather(dim=1,
-                                        index=knn_idx.view([bs, -1])[:, :, None].expand(-1, -1, num_channels)).view(
-        [bs, -1, k, num_channels])  # [bs, num_seeds, k, num_channels]
+                                        index=knn_idx.view([bs, -1])[:, :, None].expand(-1, -1, num_channels))\
+                                        .view([bs, -1, k, num_channels])  # [bs, num_seeds, k, num_channels]
     knn_M = torch.matmul(knn_features, knn_features.permute(0, 1, 3, 2))
     knn_M = torch.clamp(1 - (1 - knn_M) / sigma ** 2, min=0)
     knn_M = knn_M.view([-1, k, k])
@@ -107,7 +245,7 @@ def build_seed_knn_weights(seeds, corr_features, H, src_keypts, tgt_keypts, sigm
     #################################
     # Power iteratation to get the inlier probability
     #################################
-    total_knn_M = feature_knn_M * spatial_knn_M  # 有用
+    total_knn_M = feature_knn_M * spatial_knn_M
     total_knn_M[:, torch.arange(total_knn_M.shape[1]), torch.arange(total_knn_M.shape[1])] = 0
     total_weight = cal_leading_eigenvector(total_knn_M, num_iterations, method='power')
     total_weight = total_weight.view([bs, -1, k])
@@ -128,13 +266,12 @@ def evaluate_hypotheses(seeds, H, src_knn, tgt_knn, total_weight, src_keypts, tg
     mask = H
     corr_mask = (mask.sum(dim=1) > 0).float()[:, None, :]
     seed_mask = mask.gather(dim=1, index=seeds[:, :, None].expand(-1, -1, num_corr))  # [bs, num_seeds, num_corr]
-    # 2、每个假设得到pred inliers
+    # 2、Inlier estimation for each hypothesis
     src_knn, tgt_knn = src_knn.view([-1, k, 3]), tgt_knn.view([-1, k, 3])
     seedwise_trans = kabsch(src_knn, tgt_knn, total_weight)  # weight 有用
     seedwise_trans = seedwise_trans.view([bs, -1, 4, 4])
     pred_position = torch.einsum('bsnm,bmk->bsnk', seedwise_trans[:, :, :3, :3],
-                                 src_keypts.permute(0, 2, 1)) + seedwise_trans[:, :, :3,
-                                                                3:4]  # [bs, num_seeds, num_corr, 3]
+                                 src_keypts.permute(0, 2, 1)) + seedwise_trans[:, :, :3, 3:4]  # [bs, num_seeds, num_corr, 3]
     pred_position = pred_position.permute(0, 1, 3, 2)
     L2_dis = torch.norm(pred_position - tgt_keypts[:, None, :, :], dim=-1)  # [bs, num_seeds, num_corr]
     seed_L2_dis = L2_dis * corr_mask + (1 - corr_mask) * float(1e9)
