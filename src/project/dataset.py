@@ -200,6 +200,7 @@ class FullAlignmentDataset(Dataset):
                 "num_samples": 0,
                 "total_sampled_sources": 0,
                 "total_true_in_knn": 0,
+                "total_true_after_force": 0,
                 "overall_coverage": 0.0,
                 "mean_coverage": 0.0,
                 "std_coverage": 0.0,
@@ -210,24 +211,27 @@ class FullAlignmentDataset(Dataset):
         per_sample_coverage = []
         total_sampled_sources = 0
         total_true_in_knn = 0
+        total_true_after_force = 0
         for idx in range(len(self.files)):
             stats = self.true_pair_coverage_for_index(idx)
             per_sample_coverage.append(stats["coverage"])
             total_sampled_sources += stats["num_sampled_sources"]
             total_true_in_knn += stats["num_true_in_knn"]
+            if self.force_add_true_pairs:
+                total_true_after_force += stats["num_sampled_sources"]
+            else:
+                total_true_after_force += stats["num_true_in_knn"]
 
-        if self.force_add_true_pairs and total_sampled_sources > 0:
-            overall_coverage = 1.0
-        else:
-            overall_coverage = (
-                float(total_true_in_knn / total_sampled_sources)
-                if total_sampled_sources > 0
-                else 0.0
-            )
+        overall_coverage = (
+            float(total_true_after_force / total_sampled_sources)
+            if total_sampled_sources > 0
+            else 0.0
+        )
         summary = {
             "num_samples": len(self.files),
             "total_sampled_sources": int(total_sampled_sources),
             "total_true_in_knn": int(total_true_in_knn),
+            "total_true_after_force": int(total_true_after_force),
             "overall_coverage": float(overall_coverage),
             "mean_coverage": float(np.mean(per_sample_coverage)),
             "std_coverage": float(np.std(per_sample_coverage)),

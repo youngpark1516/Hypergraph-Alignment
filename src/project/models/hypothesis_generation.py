@@ -69,7 +69,15 @@ def cal_leading_eigenvector(M, num_iterations, method='power'):
     exit(-1)
 
 
-def spectral_matching_greedy(M, src_idx=None, tgt_idx=None, max_ratio=None, num_iterations=10, method='power'):
+def spectral_matching_greedy(
+    M,
+    src_idx=None,
+    tgt_idx=None,
+    max_ratio=None,
+    num_iterations=10,
+    method='power',
+    min_score=0.1,
+):
     """
     Spectral matching (leading eigenvector) + greedy one-to-one selection.
     Args:
@@ -79,6 +87,7 @@ def spectral_matching_greedy(M, src_idx=None, tgt_idx=None, max_ratio=None, num_
         max_ratio: optional max ratio of matches to return (0..1)
         num_iterations: power-iteration steps for leading eigenvector
         method:    'power' or 'eig'
+        min_score: optional absolute threshold on spectral score
     Returns:
         selected_idx: LongTensor [bs, max_len] (padded with -1)
         selected_mask: BoolTensor [bs, max_len] indicating valid entries
@@ -107,11 +116,16 @@ def spectral_matching_greedy(M, src_idx=None, tgt_idx=None, max_ratio=None, num_
             max_num = 1
         max_num = min(max_num, max_possible)
 
+    valid_score_mask = torch.ones_like(scores, dtype=torch.bool)
+    if min_score is not None:
+        valid_score_mask = scores >= float(min_score)
     order = torch.argsort(scores, descending=True)
     used_src = set()
     used_tgt = set()
     picks = []
     for idx in order.tolist():
+        if not bool(valid_score_mask[idx]):
+            continue
         s = int(src_idx[idx].item())
         t = int(tgt_idx[idx].item())
         if s in used_src or t in used_tgt:
@@ -142,6 +156,7 @@ def two_stage_spectral_matching_greedy(
     max_ratio=None,
     num_iterations=10,
     method='power',
+    min_score=0.1,
 ):
     """
     Two-stage spectral matching with subgraph restriction:
@@ -155,6 +170,7 @@ def two_stage_spectral_matching_greedy(
         tgt_idx:   [num_corr] optional target indices per correspondence
         max_ratio_seeds: optional max ratio in stage 1
         max_ratio: optional max ratio in stage 2
+        min_score: optional absolute threshold on spectral score
     Returns:
         selected_idx: LongTensor [bs, max_len] (padded with -1)
         selected_mask: BoolTensor [bs, max_len] indicating valid entries
@@ -181,7 +197,7 @@ def two_stage_spectral_matching_greedy(
 
     sel_seed_idx, sel_seed_mask = spectral_matching_greedy(
         M_seed, src_seed, tgt_seed, max_ratio=max_ratio_seeds,
-        num_iterations=num_iterations, method=method
+        num_iterations=num_iterations, method=method, min_score=min_score
     )
     sel_seed_idx = sel_seed_idx[sel_seed_mask]
     if sel_seed_idx.numel() == 0:
@@ -199,12 +215,165 @@ def two_stage_spectral_matching_greedy(
 
     sel_idx, sel_mask = spectral_matching_greedy(
         M_cand, src_cand, tgt_cand, max_ratio=max_ratio,
-        num_iterations=num_iterations, method=method
+        num_iterations=num_iterations, method=method, min_score=min_score
     )
     sel_idx = sel_idx[sel_mask]
     selected = candidates[sel_idx]
     selected_mask = torch.ones_like(selected, dtype=torch.bool)
     return selected, selected_mask
+
+
+def greedy_compatibility_expansion(
+    M,
+    confidence,
+    seeds,
+    max_ratio=None,
+    src_idx=None,
+    tgt_idx=None,
+    topk_each_iter=8,
+    min_confidence=1.0,
+):
+    """
+    Greedy expansion from confidence and compatibility:
+      1) choose highest-confidence node from seeds as the start
+      2) iteratively add the node with highest compatibility to any selected node
+    Args:
+        M:         [num_corr, num_corr] or [1, num_corr, num_corr] compatibility matrix
+        confidence:[num_corr] or [1, num_corr] confidence score per correspondence
+        seeds:     [num_seeds] or [1, num_seeds] seed correspondence indices
+        max_ratio: optional max ratio of selected nodes (0..1)
+        src_idx:   optional source indices per correspondence for overlap filtering
+        tgt_idx:   optional target indices per correspondence for overlap filtering
+        topk_each_iter: number of new candidates to try each iteration
+        min_confidence: optional absolute threshold on node confidence
+    Returns:
+        selected_idx: LongTensor [num_selected]
+        selected_mask: BoolTensor [num_selected]
+    """
+    if M.dim() == 3:
+        if M.shape[0] != 1:
+            raise ValueError("Only bs==1 is supported")
+        M = M.squeeze(0)
+    if confidence.dim() == 2:
+        if confidence.shape[0] != 1:
+            raise ValueError("Only bs==1 is supported")
+        confidence = confidence.squeeze(0)
+    if seeds.dim() == 2:
+        if seeds.shape[0] != 1:
+            raise ValueError("Only bs==1 is supported")
+        seeds = seeds.squeeze(0)
+    if M.dim() != 2:
+        raise ValueError(f"M must have shape (num_corr, num_corr), got {M.shape}")
+    if confidence.dim() != 1:
+        raise ValueError(f"confidence must have shape (num_corr,), got {confidence.shape}")
+    if seeds.dim() != 1:
+        raise ValueError(f"seeds must have shape (num_seeds,), got {seeds.shape}")
+    if src_idx is not None and src_idx.dim() == 2:
+        if src_idx.shape[0] != 1:
+            raise ValueError("Only bs==1 is supported")
+        src_idx = src_idx.squeeze(0)
+    if tgt_idx is not None and tgt_idx.dim() == 2:
+        if tgt_idx.shape[0] != 1:
+            raise ValueError("Only bs==1 is supported")
+        tgt_idx = tgt_idx.squeeze(0)
+
+    num_corr = M.shape[0]
+    if confidence.numel() != num_corr:
+        raise ValueError("confidence length must match num_corr")
+    if src_idx is None:
+        src_idx = torch.arange(num_corr, device=M.device, dtype=torch.long)
+    if tgt_idx is None:
+        tgt_idx = torch.arange(num_corr, device=M.device, dtype=torch.long)
+    if src_idx.numel() != num_corr or tgt_idx.numel() != num_corr:
+        raise ValueError("src_idx/tgt_idx length must match num_corr")
+    if seeds.numel() == 0:
+        selected_idx = torch.full((0,), -1, device=M.device, dtype=torch.long)
+        selected_mask = torch.zeros((0,), device=M.device, dtype=torch.bool)
+        return selected_idx, selected_mask
+
+    if max_ratio is None:
+        max_num = num_corr
+    else:
+        max_num = int(num_corr * max_ratio)
+        if max_ratio > 0 and max_num == 0:
+            max_num = 1
+        max_num = min(max_num, num_corr)
+    if max_num <= 0:
+        raise ValueError("max_ratio must be > 0 to select any nodes")
+
+    confidence_allowed = torch.ones(num_corr, dtype=torch.bool, device=M.device)
+    if min_confidence is not None:
+        confidence_allowed = confidence >= float(min_confidence)
+    src_list = src_idx.detach().cpu().tolist()
+    tgt_list = tgt_idx.detach().cpu().tolist()
+    src_to_nodes = {}
+    tgt_to_nodes = {}
+    for node in range(num_corr):
+        src_to_nodes.setdefault(src_list[node], []).append(node)
+        tgt_to_nodes.setdefault(tgt_list[node], []).append(node)
+
+    # Start seed must pass confidence threshold.
+    seed_allowed = confidence_allowed[seeds]
+    if not bool(seed_allowed.any()):
+        selected_idx = torch.full((0,), -1, device=M.device, dtype=torch.long)
+        selected_mask = torch.zeros((0,), device=M.device, dtype=torch.bool)
+        return selected_idx, selected_mask
+    seed_conf = confidence[seeds].clone()
+    seed_conf[~seed_allowed] = float("-inf")
+    start_local = torch.argmax(seed_conf)
+    start_idx = int(seeds[start_local].item())
+
+    selected = [start_idx]
+    selected_set = {start_idx}
+    unoccupied_src = set(src_to_nodes.keys())
+    unoccupied_tgt = set(tgt_to_nodes.keys())
+    available_mask = confidence_allowed.clone()
+    M_work = M.clone()
+
+    def _occupy_and_invalidate(src_val, tgt_val):
+        if src_val in unoccupied_src:
+            unoccupied_src.remove(src_val)
+        if tgt_val in unoccupied_tgt:
+            unoccupied_tgt.remove(tgt_val)
+        newly_invalid = set(src_to_nodes.get(src_val, [])) | set(tgt_to_nodes.get(tgt_val, []))
+        if not newly_invalid:
+            return
+        invalid_nodes = [node for node in newly_invalid if bool(available_mask[node])]
+        if len(invalid_nodes) == 0:
+            return
+        invalid_idx = torch.tensor(invalid_nodes, device=M.device, dtype=torch.long)
+        available_mask[invalid_idx] = False
+        M_work[invalid_idx, :] = 0
+        M_work[:, invalid_idx] = 0
+
+    # Initial overlap filter using the starting node.
+    _occupy_and_invalidate(src_list[start_idx], tgt_list[start_idx])
+
+    while len(selected) < max_num:
+        selected_tensor = torch.tensor(selected, device=M.device, dtype=torch.long)
+        score = M_work[selected_tensor, :].sum(dim=0)
+        score[~available_mask] = float("-inf")
+        remaining = int(available_mask.sum().item())
+        if remaining <= 0:
+            break
+        k = min(max(1, int(topk_each_iter)), remaining, max_num - len(selected))
+        candidates = torch.topk(score, k=k, largest=True).indices.tolist()
+        added = 0
+        for node in candidates:
+            if not bool(available_mask[node]) or node in selected_set:
+                continue
+            selected.append(node)
+            selected_set.add(node)
+            _occupy_and_invalidate(src_list[node], tgt_list[node])
+            added += 1
+            if len(selected) >= max_num:
+                break
+        if added == 0:
+            break
+
+    selected_idx = torch.tensor(selected, device=M.device, dtype=torch.long)
+    selected_mask = torch.ones_like(selected_idx, dtype=torch.bool)
+    return selected_idx, selected_mask
 
 
 def build_seed_knn_weights(seeds, corr_features, H, src_keypts, tgt_keypts, sigma, sigma_d, num_iterations):

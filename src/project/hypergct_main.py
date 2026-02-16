@@ -76,11 +76,11 @@ def build_dataloaders(args):
         args.val_true_pair_coverage = val_cov["overall_coverage"]
         print(
             f"Train true-pair@k coverage: {100.0 * train_cov['overall_coverage']:.2f}% "
-            f"({train_cov['total_true_in_knn']}/{train_cov['total_sampled_sources']})"
+            f"(true pairs / total pairs = {train_cov['total_true_after_force']}/{train_cov['total_sampled_sources']})"
         )
         print(
             f"Val true-pair@k coverage: {100.0 * val_cov['overall_coverage']:.2f}% "
-            f"({val_cov['total_true_in_knn']}/{val_cov['total_sampled_sources']})"
+            f"(true pairs / total pairs = {val_cov['total_true_after_force']}/{val_cov['total_sampled_sources']})"
         )
 
     return train_loader, val_loader

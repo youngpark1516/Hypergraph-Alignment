@@ -8,7 +8,11 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 from project.utils.timer import AverageMeter, Timer
-from project.models.hypothesis_generation import spectral_matching_greedy, two_stage_spectral_matching_greedy
+from project.models.hypothesis_generation import (
+    greedy_compatibility_expansion,
+    spectral_matching_greedy,
+    two_stage_spectral_matching_greedy,
+)
 
 def disjointness_from_w(W, eps=1e-8):
     """
@@ -116,6 +120,8 @@ class Trainer(object):
         self.mode = args.mode
         self.generate = getattr(args, "generate", False)
         self.generation_method = getattr(args, "generation_method", "spectral-2")
+        self.generation_min_score = getattr(args, "generation_min_score", None)
+        self.generation_min_confidence = getattr(args, "generation_min_confidence", None)
         eval_one_file_arg = getattr(args, "eval_one_file", "")
         if isinstance(eval_one_file_arg, str):
             self.eval_one_file = eval_one_file_arg.strip() != ""
@@ -447,12 +453,25 @@ class Trainer(object):
                             num_iterations=self.model.num_iterations,
                             max_ratio=0.4,
                             max_ratio_seeds=0.4,
+                            min_score=self.generation_min_score,
                         )
                     elif self.generation_method == "spectral":
                         selected_idx, selected_mask = spectral_matching_greedy(
                             M.squeeze(0),
                             max_ratio=0.4,
                             num_iterations=self.model.num_iterations,
+                            min_score=self.generation_min_score,
+                        )
+                    elif self.generation_method == "greedy":
+                        selected_idx, selected_mask = greedy_compatibility_expansion(
+                            M.squeeze(0),
+                            res["confidence"].squeeze(0),
+                            res["seeds"].squeeze(0),
+                            max_ratio=0.4,
+                            src_idx=src_indices.squeeze(0) if src_indices is not None else None,
+                            tgt_idx=tgt_indices.squeeze(0) if tgt_indices is not None else None,
+                            topk_each_iter=8,
+                            min_confidence=self.generation_min_confidence,
                         )
                     else:
                         raise ValueError(f"Unknown generation_method: {self.generation_method}")
@@ -465,7 +484,7 @@ class Trainer(object):
                     true_ratio = (selected_true / selected_total) if selected_total > 0 else 0.0
                     print(
                         f"selected true correspondences: {selected_true}/{selected_total} "
-                        f"({100.0 * true_ratio:.2f}%)"
+                        f"(precision = {100.0 * true_ratio:.2f}%)"
                     )
 
                     if src_indices is not None and tgt_indices is not None:
