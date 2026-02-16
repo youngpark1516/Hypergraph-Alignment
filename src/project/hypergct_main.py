@@ -68,6 +68,21 @@ def build_dataloaders(args):
         num_workers=args.num_workers,
         drop_last=False,
     )
+
+    if hasattr(train_set, "summarize_true_pair_coverage"):
+        train_cov = train_set.summarize_true_pair_coverage()
+        val_cov = val_set.summarize_true_pair_coverage()
+        args.train_true_pair_coverage = train_cov["overall_coverage"]
+        args.val_true_pair_coverage = val_cov["overall_coverage"]
+        print(
+            f"Train true-pair@k coverage: {100.0 * train_cov['overall_coverage']:.2f}% "
+            f"({train_cov['total_true_in_knn']}/{train_cov['total_sampled_sources']})"
+        )
+        print(
+            f"Val true-pair@k coverage: {100.0 * val_cov['overall_coverage']:.2f}% "
+            f"({val_cov['total_true_in_knn']}/{val_cov['total_sampled_sources']})"
+        )
+
     return train_loader, val_loader
 
 

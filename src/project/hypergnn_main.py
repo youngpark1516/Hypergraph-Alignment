@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from project.dataset import AlignmentDataset
+from project.dataset import AlignmentDataset, FullAlignmentDataset
 from project.config.hypergnn_config import get_config
 from project.models.hypergnn.loss import (
     ClassificationLoss,
@@ -34,26 +34,79 @@ def build_dataloaders(args):
     split = int(len(files) * (1.0 - args.val_ratio))
     train_files = [files[i] for i in indices[:split]]
     val_files = [files[i] for i in indices[split:]]
+    if (args.eval_snapshot or args.mode == "test") and args.eval_one_file:
+        eval_one_file_value = args.eval_one_file
+        if isinstance(eval_one_file_value, bool):
+            use_auto = eval_one_file_value
+            eval_one_file_text = "auto" if use_auto else ""
+        else:
+            eval_one_file_text = str(eval_one_file_value).strip()
+            use_auto = eval_one_file_text.lower() in {"auto", "true", "1", "yes"}
+
+        if use_auto:
+            chosen = val_files[:1] if val_files else files[:1]
+            if not chosen:
+                raise ValueError(f"No .npz files available under {root} for eval_one_file.")
+            val_files = chosen
+            print(f"eval_one_file enabled, using: {val_files[0]}")
+        else:
+            requested = Path(eval_one_file_text)
+            candidates = [requested]
+            if not requested.is_absolute():
+                candidates.append(root / requested)
+            resolved = None
+            for candidate in candidates:
+                if candidate.is_file():
+                    resolved = candidate
+                    break
+            if resolved is None:
+                raise FileNotFoundError(
+                    f"eval_one_file path not found: {eval_one_file_text}. "
+                    f"Tried: {', '.join(str(p) for p in candidates)}"
+                )
+            val_files = [resolved]
+            print(f"eval_one_file enabled, using: {resolved}")
 
     include_gt_trans = not args.skip_gt_trans
-    train_set = AlignmentDataset(
-        train_files,
-        num_corr=args.num_node,
-        use_features=args.use_features,
-        feature_dim=args.feature_dim,
-        neg_ratio=args.neg_ratio,
-        include_gt_trans=include_gt_trans,
-        seed=args.split_seed,
-    )
-    val_set = AlignmentDataset(
-        val_files,
-        num_corr=args.num_node,
-        use_features=args.use_features,
-        feature_dim=args.feature_dim,
-        neg_ratio=args.neg_ratio,
-        include_gt_trans=include_gt_trans,
-        seed=args.split_seed + 1,
-    )
+    if args.full_data:
+        print("Using FullAlignmentDataset")
+        train_set = FullAlignmentDataset(
+            train_files,
+            num_corr=args.num_node,
+            use_features=args.use_features,
+            feature_dim=args.feature_dim,
+            include_gt_trans=include_gt_trans,
+            seed=args.split_seed,
+            force_add_true_pairs=True,
+        )
+        val_set = FullAlignmentDataset(
+            val_files,
+            num_corr=args.num_node,
+            use_features=args.use_features,
+            feature_dim=args.feature_dim,
+            include_gt_trans=include_gt_trans,
+            seed=args.split_seed + 1,
+            force_add_true_pairs=True,
+        )
+    else:
+        train_set = AlignmentDataset(
+            train_files,
+            num_corr=args.num_node,
+            use_features=args.use_features,
+            feature_dim=args.feature_dim,
+            neg_ratio=args.neg_ratio,
+            include_gt_trans=include_gt_trans,
+            seed=args.split_seed,
+        )
+        val_set = AlignmentDataset(
+            val_files,
+            num_corr=args.num_node,
+            use_features=args.use_features,
+            feature_dim=args.feature_dim,
+            neg_ratio=args.neg_ratio,
+            include_gt_trans=include_gt_trans,
+            seed=args.split_seed + 1,
+        )
 
     train_loader = DataLoader(
         train_set,
@@ -69,6 +122,20 @@ def build_dataloaders(args):
         num_workers=args.num_workers,
         drop_last=False,
     )
+
+    if hasattr(train_set, "summarize_true_pair_coverage"):
+        train_cov = train_set.summarize_true_pair_coverage()
+        val_cov = val_set.summarize_true_pair_coverage()
+        args.train_true_pair_coverage = train_cov["overall_coverage"]
+        args.val_true_pair_coverage = val_cov["overall_coverage"]
+        print(
+            f"Train true-pair@k coverage: {100.0 * train_cov['overall_coverage']:.2f}% "
+            f"({train_cov['total_true_in_knn']}/{train_cov['total_sampled_sources']})"
+        )
+        print(
+            f"Val true-pair@k coverage: {100.0 * val_cov['overall_coverage']:.2f}% "
+            f"({val_cov['total_true_in_knn']}/{val_cov['total_sampled_sources']})"
+        )
     return train_loader, val_loader
 
 

@@ -827,6 +827,7 @@ class HyperGCT(nn.Module):
             input_data['tgt_normal'])
         
         bs, num_corr, num_dim = corr.size()
+        print('Number of correspondences:', num_corr)
         FCG_K = int(num_corr * 0.1)
         
         with torch.no_grad():
@@ -852,7 +853,7 @@ class HyperGCT(nn.Module):
             
             FCG[:, torch.arange(FCG.shape[1]), torch.arange(FCG.shape[1])] = 0
 
-            # Remain top matches for each row
+            # Keep top matches for each row
             sorted_value, _ = torch.topk(FCG, FCG_K, dim=2, largest=True, sorted=False)
             sorted_value = sorted_value.reshape(bs, -1)
             thresh = sorted_value.mean(dim=1, keepdim=True).unsqueeze(2)
@@ -867,6 +868,7 @@ class HyperGCT(nn.Module):
             del FCG
 
         F0 = corr
+        print('Running on {} correspondences.'.format(W.shape[1]))
         raw_H, H, edge_score, corr_feats = self.encoder(F0.permute(0, 2, 1), W)  # bs, dim, num_corr
         del W, F0  # Free after encoder
         

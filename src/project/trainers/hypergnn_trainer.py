@@ -8,7 +8,7 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 from project.utils.timer import AverageMeter, Timer
-from project.models.hypothesis_generation import two_stage_spectral_matching_greedy
+from project.models.hypothesis_generation import spectral_matching_greedy, two_stage_spectral_matching_greedy
 
 def disjointness_from_w(W, eps=1e-8):
     """
@@ -115,6 +115,12 @@ class Trainer(object):
         self.use_wandb = getattr(args, "use_wandb", False)
         self.mode = args.mode
         self.generate = getattr(args, "generate", False)
+        self.generation_method = getattr(args, "generation_method", "spectral-2")
+        eval_one_file_arg = getattr(args, "eval_one_file", "")
+        if isinstance(eval_one_file_arg, str):
+            self.eval_one_file = eval_one_file_arg.strip() != ""
+        else:
+            self.eval_one_file = bool(eval_one_file_arg)
         self.snapshot_dir = args.snapshot_dir
         self.wandb = None
         self.writer = SummaryWriter(log_dir=args.tboard_dir)
@@ -248,7 +254,6 @@ class Trainer(object):
             if self.skip_gt_trans:
                 gt_trans = None
 
-            # TODO 收敛更快
             if epoch <= 5:
                 mask = gt_labels.mean(-1) > 0.2
                 if mask.sum() > 0:
@@ -374,6 +379,10 @@ class Trainer(object):
         meter_dict = {}
         for key in meter_list + score_list:
             meter_dict[key] = AverageMeter()
+        selected_abs_err_meter = AverageMeter()
+        selected_l2_err_meter = AverageMeter()
+        initial_abs_err_meter = AverageMeter()
+        initial_l2_err_meter = AverageMeter()
         data_timer, model_timer = Timer(), Timer()
 
         num_iter = int(len(self.val_loader.dataset) / self.batch_size)
@@ -425,32 +434,98 @@ class Trainer(object):
                         M = torch.clamp(1 - (1 - M) / self.model.sigma ** 2, min=0, max=1)
                         M[:, torch.arange(M.shape[1]), torch.arange(M.shape[1])] = 0
                     bs, num_corr, _ = corr_features.shape
-                    k = min(10, num_corr - 1)
-                    H = res["hypergraph"]
-                    feature_distance = 1 - torch.matmul(corr_features, corr_features.transpose(2, 1))
-                    masked_feature_distance = feature_distance * H.float() + (1 - H.float()) * float(1e9)
-                    knn_idx = torch.topk(masked_feature_distance, k, largest=False)[1]
-
-                    selected_idx, _ = two_stage_spectral_matching_greedy(
-                        M.squeeze(0),
-                        res["seeds"].squeeze(0),
-                        knn_idx.squeeze(0),
-                        num_iterations=self.model.num_iterations,
-                        max_ratio=0.6,
-                        max_ratio_seeds=0.8,
+                    if self.generation_method == "spectral-2":
+                        k = min(10, num_corr - 1)
+                        H = res["hypergraph"]
+                        feature_distance = 1 - torch.matmul(corr_features, corr_features.transpose(2, 1))
+                        masked_feature_distance = feature_distance * H.float() + (1 - H.float()) * float(1e9)
+                        knn_idx = torch.topk(masked_feature_distance, k, largest=False)[1]
+                        selected_idx, selected_mask = two_stage_spectral_matching_greedy(
+                            M.squeeze(0),
+                            res["seeds"].squeeze(0),
+                            knn_idx.squeeze(0),
+                            num_iterations=self.model.num_iterations,
+                            max_ratio=0.4,
+                            max_ratio_seeds=0.4,
+                        )
+                    elif self.generation_method == "spectral":
+                        selected_idx, selected_mask = spectral_matching_greedy(
+                            M.squeeze(0),
+                            max_ratio=0.4,
+                            num_iterations=self.model.num_iterations,
+                        )
+                    else:
+                        raise ValueError(f"Unknown generation_method: {self.generation_method}")
+                    selected_idx = selected_idx[selected_mask]
+                    selected_total = int(selected_idx.numel())
+                    if selected_total > 0:
+                        selected_true = int((gt_labels.squeeze(0)[selected_idx] > 0.5).sum().item())
+                    else:
+                        selected_true = 0
+                    true_ratio = (selected_true / selected_total) if selected_total > 0 else 0.0
+                    print(
+                        f"selected true correspondences: {selected_true}/{selected_total} "
+                        f"({100.0 * true_ratio:.2f}%)"
                     )
-                    print('selected_pairs', f'{selected_idx.size(0)} out of {num_corr}, selected ratio: {selected_idx.size(0) / num_corr:.2f}')
+
                     if src_indices is not None and tgt_indices is not None:
                         selected_idx_cpu = selected_idx.detach().cpu()
                         src_sel = src_indices.squeeze(0).detach().cpu()[selected_idx_cpu]
                         tgt_sel = tgt_indices.squeeze(0).detach().cpu()[selected_idx_cpu]
                         pairs = list(zip(src_sel.tolist(), tgt_sel.tolist()))
+                        file_name_single = None
                         stem = None
                         if file_name is not None:
                             if isinstance(file_name, (list, tuple)):
-                                file_name = file_name[0]
-                            base = os.path.basename(str(file_name))
+                                file_name_single = file_name[0]
+                            else:
+                                file_name_single = file_name
+                            base = os.path.basename(str(file_name_single))
                             stem = os.path.splitext(base)[0]
+
+                        if file_name_single is not None:
+                            try:
+                                eval_data = np.load(str(file_name_single))
+                                xyz1_np = eval_data["xyz1"].astype(np.float32)
+                                corres_np = eval_data["corres"].astype(np.int64)
+
+                                src_all_np = src_indices.squeeze(0).detach().cpu().numpy().astype(np.int64, copy=False)
+                                tgt_all_np = tgt_indices.squeeze(0).detach().cpu().numpy().astype(np.int64, copy=False)
+                                gt_all_idx = corres_np[src_all_np]
+                                pred_all_xyz = xyz1_np[tgt_all_np]
+                                gt_all_xyz = xyz1_np[gt_all_idx]
+                                diff_all = pred_all_xyz - gt_all_xyz
+                                mean_abs_err_all = float(np.abs(diff_all).mean())
+                                mean_l2_err_all = float(np.linalg.norm(diff_all, axis=1).mean())
+                                initial_abs_err_meter.update(mean_abs_err_all)
+                                initial_l2_err_meter.update(mean_l2_err_all)
+
+                                if selected_total > 0:
+                                    src_sel_np = src_sel.numpy().astype(np.int64, copy=False)
+                                    tgt_sel_np = tgt_sel.numpy().astype(np.int64, copy=False)
+                                    gt_tgt_idx = corres_np[src_sel_np]
+                                    pred_tgt_xyz = xyz1_np[tgt_sel_np]
+                                    gt_tgt_xyz = xyz1_np[gt_tgt_idx]
+                                    diff = pred_tgt_xyz - gt_tgt_xyz
+                                    mean_abs_err = float(np.abs(diff).mean())
+                                    mean_l2_err = float(np.linalg.norm(diff, axis=1).mean())
+                                    selected_abs_err_meter.update(mean_abs_err)
+                                    selected_l2_err_meter.update(mean_l2_err)
+                                if self.eval_one_file:
+                                    if selected_total > 0:
+                                        print(
+                                            f"selected target distance error: "
+                                            f"mean|y_pred-y_gt|={mean_abs_err:.6f}, "
+                                            f"mean_l2={mean_l2_err:.6f}"
+                                        )
+                                    print(
+                                        f"initial dataset target distance error: "
+                                        f"mean|y_pred-y_gt|={mean_abs_err_all:.6f}, "
+                                        f"mean_l2={mean_l2_err_all:.6f}"
+                                    )
+                            except Exception as exc:
+                                print(f"selected target distance error unavailable: {exc}")
+
                         prefix = stem or f"matching_plan_epoch{epoch}_iter{iter}"
                         results_dir = os.path.join(self.snapshot_dir, 'matching')
                         os.makedirs(results_dir, exist_ok=True)
@@ -508,6 +583,18 @@ class Trainer(object):
                     meter_dict[key].update(stats[key])
 
         self.model.train()
+        if self.generate and selected_abs_err_meter.count > 0 and not self.eval_one_file:
+            print(
+                f"selected target distance error (mean over {selected_abs_err_meter.count} files): "
+                f"mean|y_pred-y_gt|={selected_abs_err_meter.avg:.6f}, "
+                f"mean_l2={selected_l2_err_meter.avg:.6f}"
+            )
+        if self.generate and initial_abs_err_meter.count > 0 and not self.eval_one_file:
+            print(
+                f"initial dataset target distance error (mean over {initial_abs_err_meter.count} files): "
+                f"mean|y_pred-y_gt|={initial_abs_err_meter.avg:.6f}, "
+                f"mean_l2={initial_l2_err_meter.avg:.6f}"
+            )
         res = {
             'sm_loss': meter_dict['sm_loss'].avg,
             'class_loss': meter_dict['class_loss'].avg,
