@@ -87,8 +87,10 @@ misc_arg.add_argument('--force_all_labels', type=str2bool, default=False)
 misc_arg.add_argument('--skip_gt_trans', type=str2bool, default=True)
 misc_arg.add_argument('--split_seed', type=int, default=0)
 misc_arg.add_argument('--eval_snapshot', type=str, default='', help='run evaluation-only with this snapshot')
-misc_arg.add_argument('--eval_one_file', nargs='?', const='auto', default='',
-                      help='during evaluation, restrict val split to one file; optionally provide a .npz path')
+misc_arg.add_argument('--eval_num', type=int, default=0,
+                      help='cap number of validation files evaluated; 0 uses all')
+misc_arg.add_argument('--eval_seed', type=int, default=0,
+                      help='random seed for eval_num file sampling')
 misc_arg.add_argument('--generation_method', type=str, default='spectral-2', choices=['spectral-2', 'spectral', 'greedy'])
 misc_arg.add_argument('--generation_min_score', type=float, default=None,
                       help='absolute minimum spectral score for spectral generation methods')

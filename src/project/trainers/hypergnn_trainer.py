@@ -122,12 +122,8 @@ class Trainer(object):
         self.generation_method = getattr(args, "generation_method", "spectral-2")
         self.generation_min_score = getattr(args, "generation_min_score", None)
         self.generation_min_confidence = getattr(args, "generation_min_confidence", None)
-        eval_one_file_arg = getattr(args, "eval_one_file", "")
-        if isinstance(eval_one_file_arg, str):
-            self.eval_one_file = eval_one_file_arg.strip() != ""
-        else:
-            self.eval_one_file = bool(eval_one_file_arg)
         self.snapshot_dir = args.snapshot_dir
+        self.matching_dir = self._resolve_matching_dir(args)
         self.wandb = None
         self.writer = SummaryWriter(log_dir=args.tboard_dir)
 
@@ -157,6 +153,16 @@ class Trainer(object):
             self.wandb.define_metric("val/step")
             self.wandb.define_metric("train/*", step_metric="train/step")
             self.wandb.define_metric("val/*", step_metric="val/step")
+
+    def _resolve_matching_dir(self, args):
+        eval_snapshot = getattr(args, "eval_snapshot", "")
+        model_path = eval_snapshot if isinstance(eval_snapshot, str) and eval_snapshot.strip() else getattr(args, "pretrain", "")
+        if isinstance(model_path, str) and model_path.strip():
+            model_path = os.path.abspath(model_path)
+            model_parent = os.path.basename(os.path.dirname(model_path))
+            if model_parent == "models":
+                return os.path.join(os.path.dirname(os.path.dirname(model_path)), "matching")
+        return os.path.join(self.snapshot_dir, "matching")
 
     def _wandb_config(self, args):
         excluded = {
@@ -530,25 +536,23 @@ class Trainer(object):
                                     mean_l2_err = float(np.linalg.norm(diff, axis=1).mean())
                                     selected_abs_err_meter.update(mean_abs_err)
                                     selected_l2_err_meter.update(mean_l2_err)
-                                if self.eval_one_file:
-                                    if selected_total > 0:
-                                        print(
-                                            f"selected target distance error: "
-                                            f"mean|y_pred-y_gt|={mean_abs_err:.6f}, "
-                                            f"mean_l2={mean_l2_err:.6f}"
-                                        )
+                                if selected_total > 0:
                                     print(
-                                        f"initial dataset target distance error: "
-                                        f"mean|y_pred-y_gt|={mean_abs_err_all:.6f}, "
-                                        f"mean_l2={mean_l2_err_all:.6f}"
+                                        f"selected target distance error: "
+                                        f"mean|y_pred-y_gt|={mean_abs_err:.6f}, "
+                                        f"mean_l2={mean_l2_err:.6f}"
                                     )
+                                print(
+                                    f"initial dataset target distance error: "
+                                    f"mean|y_pred-y_gt|={mean_abs_err_all:.6f}, "
+                                    f"mean_l2={mean_l2_err_all:.6f}"
+                                )
                             except Exception as exc:
                                 print(f"selected target distance error unavailable: {exc}")
 
                         prefix = stem or f"matching_plan_epoch{epoch}_iter{iter}"
-                        results_dir = os.path.join(self.snapshot_dir, 'matching')
-                        os.makedirs(results_dir, exist_ok=True)
-                        csv_path = os.path.join(results_dir, f"{prefix}.csv")
+                        os.makedirs(self.matching_dir, exist_ok=True)
+                        csv_path = os.path.join(self.matching_dir, f"{prefix}.csv")
                         with open(csv_path, "w", newline="") as f:
                             writer = csv.writer(f)
                             writer.writerow(["src_idx", "tgt_idx"])
@@ -602,13 +606,13 @@ class Trainer(object):
                     meter_dict[key].update(stats[key])
 
         self.model.train()
-        if self.generate and selected_abs_err_meter.count > 0 and not self.eval_one_file:
+        if self.generate and selected_abs_err_meter.count > 0:
             print(
                 f"selected target distance error (mean over {selected_abs_err_meter.count} files): "
                 f"mean|y_pred-y_gt|={selected_abs_err_meter.avg:.6f}, "
                 f"mean_l2={selected_l2_err_meter.avg:.6f}"
             )
-        if self.generate and initial_abs_err_meter.count > 0 and not self.eval_one_file:
+        if self.generate and initial_abs_err_meter.count > 0:
             print(
                 f"initial dataset target distance error (mean over {initial_abs_err_meter.count} files): "
                 f"mean|y_pred-y_gt|={initial_abs_err_meter.avg:.6f}, "

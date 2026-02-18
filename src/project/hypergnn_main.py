@@ -24,6 +24,7 @@ from project.trainers.hypergnn_trainer import Trainer
 def build_dataloaders(args):
     root = Path(args.root)
     print('Loading data from:', root)
+    eval_only = bool(args.eval_snapshot)
     files = sorted(root.glob("**/*.npz"))
     if not files:
         raise ValueError(f"No .npz files found under {root}")
@@ -34,43 +35,22 @@ def build_dataloaders(args):
     split = int(len(files) * (1.0 - args.val_ratio))
     train_files = [files[i] for i in indices[:split]]
     val_files = [files[i] for i in indices[split:]]
-    if (args.eval_snapshot or args.mode == "test") and args.eval_one_file:
-        eval_one_file_value = args.eval_one_file
-        if isinstance(eval_one_file_value, bool):
-            use_auto = eval_one_file_value
-            eval_one_file_text = "auto" if use_auto else ""
-        else:
-            eval_one_file_text = str(eval_one_file_value).strip()
-            use_auto = eval_one_file_text.lower() in {"auto", "true", "1", "yes"}
-
-        if use_auto:
-            chosen = val_files[:1] if val_files else files[:1]
-            if not chosen:
-                raise ValueError(f"No .npz files available under {root} for eval_one_file.")
-            val_files = chosen
-            print(f"eval_one_file enabled, using: {val_files[0]}")
-        else:
-            requested = Path(eval_one_file_text)
-            candidates = [requested]
-            if not requested.is_absolute():
-                candidates.append(root / requested)
-            resolved = None
-            for candidate in candidates:
-                if candidate.is_file():
-                    resolved = candidate
-                    break
-            if resolved is None:
-                raise FileNotFoundError(
-                    f"eval_one_file path not found: {eval_one_file_text}. "
-                    f"Tried: {', '.join(str(p) for p in candidates)}"
-                )
-            val_files = [resolved]
-            print(f"eval_one_file enabled, using: {resolved}")
+    if (args.eval_snapshot or args.mode == "test") and args.eval_num > 0:
+        if not val_files:
+            raise ValueError(f"No .npz files available under {root} for evaluation.")
+        eval_count = min(args.eval_num, len(val_files))
+        eval_rng = np.random.default_rng(args.eval_seed)
+        chosen_idx = eval_rng.choice(len(val_files), size=eval_count, replace=False)
+        val_files = [val_files[i] for i in chosen_idx]
+        print(
+            f"eval_num enabled, randomly selected {len(val_files)} validation files "
+            f"(eval_seed={args.eval_seed})"
+        )
 
     include_gt_trans = not args.skip_gt_trans
     if args.full_data:
         print("Using FullAlignmentDataset")
-        train_set = FullAlignmentDataset(
+        train_set = None if eval_only else FullAlignmentDataset(
             train_files,
             num_corr=args.num_node,
             use_features=args.use_features,
@@ -89,7 +69,7 @@ def build_dataloaders(args):
             force_add_true_pairs=True,
         )
     else:
-        train_set = AlignmentDataset(
+        train_set = None if eval_only else AlignmentDataset(
             train_files,
             num_corr=args.num_node,
             use_features=args.use_features,
@@ -108,7 +88,7 @@ def build_dataloaders(args):
             seed=args.split_seed + 1,
         )
 
-    train_loader = DataLoader(
+    train_loader = None if eval_only else DataLoader(
         train_set,
         batch_size=args.batch_size,
         shuffle=True,
@@ -123,15 +103,16 @@ def build_dataloaders(args):
         drop_last=False,
     )
 
-    if hasattr(train_set, "summarize_true_pair_coverage"):
-        train_cov = train_set.summarize_true_pair_coverage()
+    if hasattr(val_set, "summarize_true_pair_coverage"):
         val_cov = val_set.summarize_true_pair_coverage()
-        args.train_true_pair_coverage = train_cov["overall_coverage"]
         args.val_true_pair_coverage = val_cov["overall_coverage"]
-        print(
-            f"Train true-pair@k coverage: {100.0 * train_cov['overall_coverage']:.2f}% "
-            f"({train_cov['total_true_after_force']}/{train_cov['total_sampled_sources']})"
-        )
+        if train_set is not None and hasattr(train_set, "summarize_true_pair_coverage"):
+            train_cov = train_set.summarize_true_pair_coverage()
+            args.train_true_pair_coverage = train_cov["overall_coverage"]
+            print(
+                f"Train true-pair@k coverage: {100.0 * train_cov['overall_coverage']:.2f}% "
+                f"({train_cov['total_true_after_force']}/{train_cov['total_sampled_sources']})"
+            )
         print(
             f"Val true-pair@k coverage: {100.0 * val_cov['overall_coverage']:.2f}% "
             f"({val_cov['total_true_after_force']}/{val_cov['total_sampled_sources']})"
