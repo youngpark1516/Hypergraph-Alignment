@@ -53,7 +53,7 @@ def visualize_open3d(xyz0, xyz1, pairs, offset, point_size, title=None):
     tgt_points = []
     src_colors = []
     tgt_colors = []
-    for i, (s, t) in enumerate(pairs):
+    for s, t in pairs:
         if 0 <= s < xyz0.shape[0] and 0 <= t < xyz1.shape[0]:
             src_points.append(xyz0[s])
             tgt_points.append(xyz1[t])
@@ -123,15 +123,64 @@ def visualize_matplotlib(xyz0, xyz1, pairs, offset, title=None):
     plt.show()
 
 
+def visualize_matplotlib_projections(xyz0, xyz1, pairs, title=None):
+    import matplotlib.pyplot as plt
+
+    xyz0 = xyz0.astype(np.float32)
+    xyz1 = xyz1.astype(np.float32)
+    if len(pairs) == 0:
+        print("No pairs to visualize.")
+        return
+    src_points = []
+    tgt_points = []
+    for i, (s, t) in enumerate(pairs):
+        if 0 <= s < xyz0.shape[0] and 0 <= t < xyz1.shape[0]:
+            src_points.append(xyz0[s])
+            tgt_points.append(xyz1[t])
+    if not src_points:
+        print("No valid pairs within bounds.")
+        return
+    src_points = np.asarray(src_points, dtype=np.float32)
+    tgt_points = np.asarray(tgt_points, dtype=np.float32)
+    src_color = np.array([0.121, 0.466, 0.705], dtype=np.float32)
+    tgt_color = np.array([1.0, 0.498, 0.054], dtype=np.float32)
+
+    projections = [("XY", 0, 1), ("XZ", 0, 2), ("YZ", 1, 2)]
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    if title is not None:
+        fig.suptitle(title)
+    for ax, (name, d0, d1) in zip(axes, projections):
+        ax.scatter(src_points[:, d0], src_points[:, d1], c=src_color[None, :], s=18, marker=".", label="src")
+        ax.scatter(tgt_points[:, d0], tgt_points[:, d1], c=tgt_color[None, :], s=18, marker=".", label="tgt")
+        ax.set_title(name)
+        ax.set_aspect("equal", adjustable="box")
+        all_x = np.concatenate([src_points[:, d0], tgt_points[:, d0]])
+        all_y = np.concatenate([src_points[:, d1], tgt_points[:, d1]])
+        x_min, x_max = float(all_x.min()), float(all_x.max())
+        y_min, y_max = float(all_y.min()), float(all_y.max())
+        x_pad = max((x_max - x_min) * 0.08, 1e-3)
+        y_pad = max((y_max - y_min) * 0.08, 1e-3)
+        ax.set_xlim(x_min - x_pad, x_max + x_pad)
+        ax.set_ylim(y_min - y_pad, y_max + y_pad)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper right")
+    plt.tight_layout()
+    plt.show()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", required=True, help="CSV with src_idx,tgt_idx pairs")
     parser.add_argument("--npz", required=True, help="NPZ file with schema in output_schema.md")
-    parser.add_argument("--select_pairs", type=int, default=1000, help="Pairs to sample each round")
+    parser.add_argument("--select_pairs", type=int, default=25, help="Pairs to sample each round")
     parser.add_argument("--rounds", type=int, default=5, help="Number of random samples to visualize")
     parser.add_argument("--seed", type=int, default=0, help="Random seed for sampling")
     parser.add_argument("--offset", type=float, default=None, help="Manual x-offset for target cloud")
     parser.add_argument("--point_size", type=float, default=2.0, help="Point size for Open3D viewer")
+    parser.add_argument("--plot_mode", type=str, default="3d", choices=["3d", "proj"],
+                        help="3d: interactive 3D view; proj: XY/XZ/YZ projections")
     args = parser.parse_args()
 
     data = np.load(args.npz)
@@ -158,11 +207,14 @@ def main():
             idx = rng.choice(len(pairs), size=select_pairs, replace=False)
             sampled = [pairs[i] for i in idx]
         title = f"sample {r + 1}/{rounds} ({len(sampled)} pairs)"
-        try:
-            visualize_open3d(xyz0, xyz1, sampled, offset, args.point_size, title=title)
-        except Exception as exc:
-            print(f"Open3D visualization failed ({exc}). Falling back to matplotlib.", file=sys.stderr)
-            visualize_matplotlib(xyz0, xyz1, sampled, offset, title=title)
+        if args.plot_mode == "proj":
+            visualize_matplotlib_projections(xyz0, xyz1, sampled, title=title)
+        else:
+            try:
+                visualize_open3d(xyz0, xyz1, sampled, offset, args.point_size, title=title)
+            except Exception as exc:
+                print(f"Open3D visualization failed ({exc}). Falling back to matplotlib.", file=sys.stderr)
+                visualize_matplotlib(xyz0, xyz1, sampled, offset, title=title)
 
 
 if __name__ == "__main__":
