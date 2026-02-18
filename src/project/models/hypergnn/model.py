@@ -868,7 +868,6 @@ class HyperGCT(nn.Module):
             del FCG
 
         F0 = corr
-        print('Running on {} correspondences.'.format(W.shape[1]))
         raw_H, H, edge_score, corr_feats = self.encoder(F0.permute(0, 2, 1), W)  # bs, dim, num_corr
         del W, F0  # Free after encoder
         
