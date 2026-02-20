@@ -11,8 +11,8 @@ feature_dim: 33
 neg_ratio: 2.0
 seed_ratio: 0.2
 num_node: 512
-batch_size: 8
+batch_size: 16
 num_workers: 12
 skip_gt_trans: true
-pooling_layer_idx: -1
+pooling_layer_idx: [0, 1, 2, 3, 4, 5]
 aggregation: wasserstein
