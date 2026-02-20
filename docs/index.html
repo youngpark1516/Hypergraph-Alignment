@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wasserstein Hypergraph Learning for 3D Point Cloud Alignment</title>
+  <meta name="description" content="Public-facing project website for Wasserstein Hypergraph Learning for General 3D Point Cloud Alignment." />
+  <link rel="stylesheet" href="assets/css/style.css" />
+</head>
+
+<body>
+  <header class="site-header">
+    <div class="nav-wrap">
+      <a class="brand" href="#top">WHNN Alignment</a>
+      <nav class="nav-links">
+        <a href="#overview">Overview</a>
+        <a href="#motivation">Motivation</a>
+        <a href="#approach">Approach</a>
+        <a href="#evaluation">Evaluation</a>
+        <a href="#results">Results</a>
+        <a href="#links">Links</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top" class="container">
+    <!-- HERO -->
+    <section class="hero">
+      <h1>Wasserstein Hypergraph Learning for General 3D Point Cloud Alignment</h1>
+
+      <p class="authors">
+        Chanyoung Park (chp026@ucsd.edu) · Minghan Wu (miw039@ucsd.edu) ·
+        Gal Mishne (gmishne@ucsd.edu) · Yusu Wang (yuw122@ucsd.edu)
+      </p>
+
+      <p class="subtitle">
+        We improve hypergraph-based 3D alignment by replacing mean pooling with a
+        Wasserstein-based aggregation that better preserves local feature structure.
+      </p>
+
+      <div class="cta-row">
+        <a class="btn" target="_blank" rel="noreferrer"
+           href="https://github.com/youngpark1516/Hypergraph-Alignment">Code</a>
+        <a class="btn btn-outline" target="_blank" rel="noreferrer"
+           href="#">Report (PDF)</a>
+      </div>
+    </section>
+
+    <!-- OVERVIEW -->
+    <section id="overview" class="section">
+      <h2>Overview</h2>
+      <p>
+        Accurate 3D point cloud alignment is used for shape correspondence, reconstruction,
+        and tracking. In practice, alignment is hard because of non-rigid deformation, partial
+        observations, and noise.
+      </p>
+      <p>
+        Our project focuses on a specific part of hypergraph learning pipelines: how we
+        summarize neighborhood (hyperedge) information. Instead of averaging (mean pooling),
+        we use a distribution-aware aggregation based on optimal transport ideas.
+      </p>
+    </section>
+
+    <!-- MOTIVATION -->
+    <section id="motivation" class="section">
+      <h2>Why this matters</h2>
+      <p>
+        Many alignment systems depend on local neighborhoods being represented well enough to
+        disambiguate correspondences. When neighborhoods are multi-modal or sampling density
+        changes, simple averaging can blur important structure and reduce robustness.
+      </p>
+
+      <details class="details">
+        <summary>Optional: one-paragraph technical context</summary>
+        <div class="details-body">
+          <p>
+            Hypergraph models represent higher-order relationships (groups of points), which can
+            better capture local geometric consistency than pairwise edges alone. The choice of
+            aggregation inside these hypergraph layers can influence both accuracy and robustness.
+          </p>
+        </div>
+      </details>
+    </section>
+
+    <!-- APPROACH -->
+    <section id="approach" class="section">
+      <h2>Approach (high-level)</h2>
+
+      <div class="bullets">
+        <div class="card">
+          <h3>Start from a hypergraph alignment baseline</h3>
+          <p>
+            We build on a dynamic hypergraph pipeline for point cloud alignment that groups
+            candidate correspondences into hyperedges and refines them through message passing.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Replace mean pooling with Wasserstein aggregation</h3>
+          <p>
+            Instead of summarizing a neighborhood by a single average vector, we treat the set of
+            neighborhood features as a distribution and aggregate in a way that is sensitive to
+            how that “mass” is arranged in feature space.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Provide a matching-based hypothesis generation step</h3>
+          <p>
+            We also implement a matching-based hypothesis generation procedure as an alternative
+            to Iterative Closest Point (ICP) for piecewise-rigid settings.
+          </p>
+        </div>
+      </div>
+
+      <details class="details">
+        <summary>Keep details hidden (checkpoint-friendly)</summary>
+        <div class="details-body">
+          <p>
+            (Later) Add 3–5 bullet points or a short diagram describing the pipeline components.
+            Avoid equations unless absolutely necessary for your audience.
+          </p>
+        </div>
+      </details>
+    </section>
+
+    <!-- EVALUATION -->
+    <section id="evaluation" class="section">
+      <h2>Evaluation (high-level)</h2>
+      <p>
+        We evaluate on standard 3D datasets under multiple perturbation settings. We report
+        correspondence quality using standard classification metrics, and we also use structural
+        diagnostics to understand hypergraph quality and robustness behavior.
+      </p>
+
+      <details class="details">
+        <summary>What we measure (placeholder)</summary>
+        <div class="details-body">
+          <ul>
+            <li>Task performance: precision / recall / F1 (plus losses)</li>
+            <li>Hypergraph structure: diagnostics that reflect grouping and separation quality</li>
+            <li>Robustness: how results change across perturbation regimes</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- RESULTS -->
+    <section id="results" class="section">
+      <h2>Results & takeaways</h2>
+      <p>
+        Overall, our results indicate that Wasserstein-based aggregation can improve performance
+        over mean pooling and can change robustness behavior across perturbation regimes.
+      </p>
+
+      <ul class="takeaways">
+        <li><strong>Takeaway 1:</strong> Distribution-aware aggregation can preserve local structure that averaging loses.</li>
+        <li><strong>Takeaway 2:</strong> Where you insert Wasserstein aggregation (early vs. late) can matter.</li>
+        <li><strong>Takeaway 3:</strong> Robustness behavior can shift across perturbation settings.</li>
+      </ul>
+
+      <details class="details">
+        <summary>Future: add 1–2 key plots/tables</summary>
+        <div class="details-body">
+          <p>
+            (Later) Insert a small number of figures that tell the story at a glance.
+            Keep it skimmable.
+          </p>
+        </div>
+      </details>
+    </section>
+
+    <!-- LINKS -->
+    <section id="links" class="section">
+      <h2>Links</h2>
+      <ul class="link-list">
+        <li><a target="_blank" rel="noreferrer" href="https://github.com/youngpark1516/Hypergraph-Alignment">Code repository</a></li>
+        <li><a target="_blank" rel="noreferrer" href="">Report (PDF)</a></li>
+      </ul>
+    </section>
+
+    <footer class="footer">
+      <p>
+        Built as a static site and hosted on GitHub Pages. © <span id="year"></span>
+      </p>
+    </footer>
+  </main>
+
+  <script src="assets/js/main.js"></script>
+</body>
+</html>
