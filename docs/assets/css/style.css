@@ -57,6 +57,11 @@ body {
 }
 .btn-outline { background: transparent; color: #111; border: 1px solid #111; }
 
+.people { margin-top: 10px; display: grid; gap: 8px; }
+.people-block { padding: 10px 12px; border: 1px solid #eee; border-radius: 12px; background: #fafafa; }
+.people-title { font-weight: 750; font-size: 13px; color: #333; margin-bottom: 4px; }
+.people-list { color: #555; font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+
 .details {
   margin-top: 12px;
   border: 1px solid #eee;
@@ -85,3 +90,4 @@ body {
 .card img { width: 100%; border-radius: 10px; border: 1px solid #f0f0f0; }
 
 .footer { padding: 24px 0 40px; color: #666; font-size: 14px; }     
+
