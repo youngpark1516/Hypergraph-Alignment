@@ -2,6 +2,7 @@ import argparse
 import os
 import time
 from pathlib import Path
+from datetime import datetime
 
 arg_lists = []
 parser = argparse.ArgumentParser()
@@ -153,7 +154,7 @@ def get_config():
     args.pooling_layer_idx = _parse_pooling_layer_idx(args.pooling_layer_idx)
 
     if args.dataset != args.dataset and args.exp_id == experiment_id:
-        new_exp_id = f"HyperGNN_{args.dataset}_{time.strftime('%m%d%H%M')}"
+        new_exp_id = f"HyperGNN_{args.dataset}_{datetime.now().strftime('%m%d%H%M%S_%f')}"
         args.exp_id = new_exp_id
         if args.snapshot_dir == default_snapshot_dir:
             args.snapshot_dir = f'snapshot/{new_exp_id}'
