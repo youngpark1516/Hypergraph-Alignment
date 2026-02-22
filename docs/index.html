@@ -106,22 +106,58 @@
       </p>
     </section>
 
-    <!-- MOTIVATION -->
+    <!-- WHY THIS MATTERS -->
     <section id="motivation" class="section">
       <h2>Why this matters</h2>
+
       <p>
-        Many alignment systems depend on local neighborhoods being represented well enough to
-        disambiguate correspondences. When neighborhoods are multi-modal or sampling density
-        changes, simple averaging can blur important structure and reduce robustness.
+        Many alignment pipelines rely on local neighborhoods to decide whether a candidate
+        correspondence is geometrically consistent. If neighborhood features are summarized poorly,
+        the model can confuse true matches with outliers, especially under deformation, partial overlap,
+        and noise.
+      </p>
+
+      <p>
+        A common choice in learning-based hypergraph alignment (including standard HyperGCT) is to use
+        mean pooling to summarize hyperedge information. Mean pooling is simple and efficient, but it can
+        blur multi-modal neighborhoods and wash out small but important structures. This motivates using a
+        distribution-aware aggregation that better preserves how features are spread within a neighborhood.
       </p>
 
       <details class="details">
-        <summary>Optional: one-paragraph technical context</summary>
+        <summary>Optional: technical context (math)</summary>
         <div class="details-body">
           <p>
-            Hypergraph models represent higher-order relationships (groups of points), which can
-            better capture local geometric consistency than pairwise edges alone. The choice of
-            aggregation inside these hypergraph layers can influence both accuracy and robustness.
+            Let a hyperedge (neighborhood) contain feature vectors
+            <code>{h1, h2, ..., hk}</code> with <code>hi ∈ R^d</code>.
+            Standard HyperGCT-style aggregation uses mean pooling:
+          </p>
+
+          <pre><code>m_mean = (1/k) * Σ_i hi</code></pre>
+
+          <p>
+            Mean pooling compresses the entire set into one vector, but different neighborhoods
+            can share the same mean even if their feature distributions are very different.
+            To keep distributional information, we treat the neighborhood as an empirical measure:
+          </p>
+
+          <pre><code>μ = (1/k) * Σ_i δ(hi)</code></pre>
+
+          <p>
+            Our idea is to aggregate by comparing this distribution to a learned reference
+            distribution <code>ν</code> using an optimal transport (Wasserstein) distance.
+            A common practical approximation is the sliced Wasserstein distance, which projects
+            features onto 1D directions <code>θ</code> and averages 1D Wasserstein distances:
+          </p>
+
+          <pre><code>SW(μ, ν) = (1/L) * Σ_{ℓ=1..L}  W1( P_{θℓ}# μ , P_{θℓ}# ν )</code></pre>
+
+          <p>
+            where <code>P_{θ}#</code> denotes the pushforward distribution after projection onto
+            direction <code>θ</code>, and <code>W1</code> is the 1D Wasserstein-1 distance computed
+            from sorted projected samples. Intuitively, mean pooling keeps only the first moment,
+            while Wasserstein-style aggregation is sensitive to how mass is arranged, helping
+            preserve multi-modal neighborhood structure.
           </p>
         </div>
       </details>
@@ -136,19 +172,20 @@
           <h3>ICP (Iterative Closest Point)</h3>
           <p>
             ICP is a classical alignment method that alternates between assigning closest-point
-            correspondences and updating the transformation. It is a strong starting point for
-            rigid or near-rigid registration, but can be sensitive to initialization and can
-            struggle under partial overlap, noise, and non-rigid deformation.
+            correspondences and updating the transformation. It works well for rigid or near-rigid
+            cases but can be sensitive to initialization and can struggle under partial overlap,
+            noise, and non-rigid deformation.
           </p>
         </div>
 
         <div class="card">
           <h3>HyperGCT (dynamic hypergraph alignment baseline)</h3>
           <p>
-            HyperGCT represents candidate correspondences as nodes in a dynamic hypergraph and
-            uses hypergraph message passing to classify inliers vs. outliers. Our project keeps
-            this overall structure and changes a key internal component: how neighborhood
-            (hyperedge) features are aggregated.
+            HyperGCT builds a dynamic hypergraph over candidate correspondences and uses hypergraph
+            message passing to classify inliers vs. outliers. In the standard HyperGCT pipeline,
+            neighborhood (hyperedge) information is summarized using mean pooling. Our method keeps
+            the same overall structure and replaces this mean pooling step with Wasserstein-based
+            aggregation.
           </p>
         </div>
       </div>
@@ -156,7 +193,7 @@
 
     <!-- PIPELINE -->
     <section id="pipeline" class="section">
-      <h2>Pipeline (high-level)</h2>
+      <h2>Pipeline</h2>
 
       <p>
         Our system follows the overall structure of a dynamic hypergraph alignment baseline (HyperGCT):
@@ -199,23 +236,67 @@
         </div>
       </details>
     </section>
+    
     <!-- EVALUATION -->
     <section id="evaluation" class="section">
-      <h2>Evaluation (high-level)</h2>
+      <h2>Evaluation</h2>
+
       <p>
-        We evaluate on standard 3D datasets under multiple perturbation settings. We report
-        correspondence quality using standard classification metrics, and we also use structural
-        diagnostics to understand hypergraph quality and robustness behavior.
+        We evaluate correspondence prediction as a classification problem over candidate
+        source–target pairs. At evaluation time, the candidate set is built using label-blind
+        feature k-nearest-neighbor (kNN) retrieval between the two point clouds.
       </p>
 
+      <div class="bullets">
+        <div class="card">
+          <h3>Datasets & perturbations</h3>
+          <p>
+            Experiments are conducted on FAUST and PartNet under controlled perturbations.
+            We evaluate rigid and non-rigid settings, including affine / piecewise-rigid regimes.
+            For affine cases, distortion magnitude is controlled by a scalar deformation/noise
+            level σ (e.g., σ = 0 and ranges such as σ ∈ [0, 1.5] and σ ∈ [0, 2]).
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Task metrics (pair classification)</h3>
+          <p>
+            We report standard correspondence classification metrics: precision, recall, and F1,
+            along with training losses (classification loss, graph loss, and matching MSE).
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>After hypothesis generation</h3>
+          <p>
+            After converting predicted confidences into a matching plan, we evaluate with a
+            distance-aware metric on the resulting correspondences. In our pipeline, greedy
+            and two-stage spectral matching behave similarly and both outperform global spectral,
+            so we use two-stage spectral matching to compute matching plans.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Structural diagnostics (hypergraph quality)</h3>
+          <p>
+            Beyond pair accuracy, we track diagnostics that reflect the learned hypergraph structure:
+            aggregatedness, disjointness, and in-edge distance consistency (variance of point distances
+            among pairs within the same hyperedge). These help interpret robustness and failure modes.
+          </p>
+        </div>
+      </div>
+
       <details class="details">
-        <summary>What we measure (placeholder)</summary>
+        <summary>Optional: metric definitions (math)</summary>
         <div class="details-body">
-          <ul>
-            <li>Task performance: precision / recall / F1 (plus losses)</li>
-            <li>Hypergraph structure: diagnostics that reflect grouping and separation quality</li>
-            <li>Robustness: how results change across perturbation regimes</li>
-          </ul>
+          <p>
+            Precision = TP / (TP + FP), Recall = TP / (TP + FN),
+            and F1 = 2PR / (P + R).
+          </p>
+          <p>
+            For distance-aware evaluation, we also measure how far predicted correspondences deviate
+            from ground-truth target locations over the subset of pairs predicted as true.
+          </p>
         </div>
       </details>
     </section>
