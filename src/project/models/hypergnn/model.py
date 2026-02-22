@@ -827,7 +827,6 @@ class HyperGCT(nn.Module):
             input_data['tgt_normal'])
         
         bs, num_corr, num_dim = corr.size()
-        print('Number of correspondences:', num_corr)
         FCG_K = int(num_corr * 0.1)
         
         with torch.no_grad():
@@ -880,14 +879,17 @@ class HyperGCT(nn.Module):
         # # set diagnal of M to zero
         M[:, torch.arange(M.shape[1]), torch.arange(M.shape[1])] = 0
 
-        if self.config.mode == "test":
+        if not self.training and bs == 1:
             seeds = self.graph_filter(H=H, confidence=confidence, max_num=int(num_corr * self.ratio))
         else:
             seeds = torch.argsort(confidence, dim=1, descending=True)[:, 0:int(num_corr * self.ratio)]
 
-        sampled_trans, pred_trans = self.hypo_sampling_and_evaluation(seeds, corr_feats.permute(0, 2, 1), H,
-                                                                    src_pts, tgt_pts, src_normal, tgt_normal)
-        sampled_trans = sampled_trans.view([-1, 4, 4])
+        if not self.training:
+            sampled_trans, pred_trans = self.hypo_sampling_and_evaluation(seeds, corr_feats.permute(0, 2, 1), H,
+                                                                        src_pts, tgt_pts, src_normal, tgt_normal)
+            sampled_trans = sampled_trans.view([-1, 4, 4])
+        else:
+            sampled_trans, pred_trans = None, None
 
         #post refinement (only used during testing and bs == 1)
         # if self.config.mode == "test":
