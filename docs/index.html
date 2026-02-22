@@ -16,7 +16,8 @@
         <a href="#overview">Overview</a>
         <a href="#problem">Problem</a>
         <a href="#motivation">Motivation</a>
-        <a href="#approach">Approach</a>
+        <a href="#baselines">Baselines</a>
+        <a href="#pipeline">Pipeline</a>
         <a href="#evaluation">Evaluation</a>
         <a href="#results">Results</a>
         <a href="#links">Links</a>
@@ -61,14 +62,33 @@
       <h2>Overview</h2>
       <p>
         Accurate 3D point cloud alignment is used for shape correspondence, reconstruction,
-        and tracking. In practice, alignment is hard because of non-rigid deformation, partial
-        observations, and noise.
+        and tracking. In practice, alignment is challenging due to non-rigid deformation,
+        partial observations, and noise.
       </p>
       <p>
-        Our project focuses on a specific part of hypergraph learning pipelines: how we
-        summarize neighborhood (hyperedge) information. Instead of averaging (mean pooling),
-        we use a distribution-aware aggregation based on optimal transport ideas.
+        This project studies one key design choice in hypergraph alignment pipelines:
+        how to aggregate neighborhood (hyperedge) information. Instead of mean pooling,
+        we use a Wasserstein-based aggregation that is more sensitive to the distribution
+        of features within a neighborhood.
       </p>
+
+      <h3 class="subhead">What we contribute</h3>
+      <ul class="takeaways">
+        <li>
+          <strong>Wasserstein aggregation in hypergraph layers:</strong>
+          Replace mean pooling with optimal-transport-inspired aggregation to better preserve
+          multi-modal neighborhood structure.
+        </li>
+        <li>
+          <strong>Placement study:</strong>
+          Compare where this aggregation is most effective (early vs. late vs. multiple layers).
+        </li>
+        <li>
+          <strong>Alternative hypothesis generation:</strong>
+          Implement a matching-based hypothesis generation step as an alternative to ICP for
+          piecewise-rigid alignment settings.
+        </li>
+      </ul>
     </section>
 
     <!-- PROBLEM SETUP -->
@@ -107,48 +127,78 @@
       </details>
     </section>
 
-    <!-- APPROACH --> 
-    <section id="approach" class="section">
-      <h2>Approach (high-level)</h2>
+    <!-- BASELINES -->
+    <section id="baselines" class="section">
+      <h2>Baselines</h2>
 
       <div class="bullets">
         <div class="card">
-          <h3>Start from a hypergraph alignment baseline</h3>
+          <h3>ICP (Iterative Closest Point)</h3>
           <p>
-            We build on a dynamic hypergraph pipeline for point cloud alignment that groups
-            candidate correspondences into hyperedges and refines them through message passing.
+            ICP is a classical alignment method that alternates between assigning closest-point
+            correspondences and updating the transformation. It is a strong starting point for
+            rigid or near-rigid registration, but can be sensitive to initialization and can
+            struggle under partial overlap, noise, and non-rigid deformation.
           </p>
         </div>
 
         <div class="card">
-          <h3>Replace mean pooling with Wasserstein aggregation</h3>
+          <h3>HyperGCT (dynamic hypergraph alignment baseline)</h3>
           <p>
-            Instead of summarizing a neighborhood by a single average vector, we treat the set of
-            neighborhood features as a distribution and aggregate in a way that is sensitive to
-            how that “mass” is arranged in feature space.
-          </p>
-        </div>
-
-        <div class="card">
-          <h3>Provide a matching-based hypothesis generation step</h3>
-          <p>
-            We also implement a matching-based hypothesis generation procedure as an alternative
-            to Iterative Closest Point (ICP) for piecewise-rigid settings.
+            HyperGCT represents candidate correspondences as nodes in a dynamic hypergraph and
+            uses hypergraph message passing to classify inliers vs. outliers. Our project keeps
+            this overall structure and changes a key internal component: how neighborhood
+            (hyperedge) features are aggregated.
           </p>
         </div>
       </div>
+    </section>
+
+    <!-- PIPELINE -->
+    <section id="pipeline" class="section">
+      <h2>Pipeline (high-level)</h2>
+
+      <p>
+        Our system follows the overall structure of a dynamic hypergraph alignment baseline (HyperGCT):
+        we build a hypergraph over candidate correspondences and refine them through hypergraph message passing.
+        Our main change is replacing mean pooling inside hypergraph layers with Wasserstein-based aggregation.
+      </p>
+
+      <ol class="pipeline">
+        <li>
+          <strong>Generate candidate correspondences:</strong>
+          form source–target pairs (train: labeled positives/negatives; eval: kNN candidates).
+        </li>
+        <li>
+          <strong>Build a dynamic hypergraph:</strong>
+          treat each candidate pair as a node and group nodes into hyperedges based on geometric consistency.
+        </li>
+        <li>
+          <strong>Hypergraph message passing:</strong>
+          update node features and predict an inlier confidence score per candidate.
+        </li>
+        <li>
+          <strong>Wasserstein aggregation (our focus):</strong>
+          replace mean pooling with a distribution-aware aggregation in selected layers
+          (we compare different insertion points).
+        </li>
+        <li>
+          <strong>Hypothesis generation:</strong>
+          use predicted inliers to produce an alignment hypothesis (matching-based alternative to ICP).
+        </li>
+      </ol>
 
       <details class="details">
-        <summary>Keep details hidden (checkpoint-friendly)</summary>
+        <summary>What exactly changed vs. baseline?</summary>
         <div class="details-body">
-          <p>
-            (Later) Add 3–5 bullet points or a short diagram describing the pipeline components.
-            Avoid equations unless absolutely necessary for your audience.
-          </p>
+          <ul>
+            <li>Baseline: mean pooling to summarize features within each hyperedge/neighborhood.</li>
+            <li>Ours: Wasserstein-based aggregation to preserve multi-modal structure in neighborhoods.</li>
+            <li>We study early vs. late vs. multi-layer insertion of the aggregation module.</li>
+          </ul>
         </div>
       </details>
     </section>
-
     <!-- EVALUATION -->
     <section id="evaluation" class="section">
       <h2>Evaluation (high-level)</h2>
