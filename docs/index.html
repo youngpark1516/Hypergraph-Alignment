@@ -17,7 +17,7 @@
         <a href="#problem">Problem</a>
         <a href="#motivation">Motivation</a>
         <a href="#baselines">Baselines</a>
-        <a href="#pipeline">Pipeline</a>
+        <a href="#method">Method</a>
         <a href="#evaluation">Evaluation</a>
         <a href="#results">Results</a>
         <a href="#links">Links</a>
@@ -125,7 +125,7 @@
       </p>
 
       <details class="details">
-        <summary>Optional: technical context (math)</summary>
+        <summary>Technical note</summary>
         <div class="details-body">
           <p>
             Let a hyperedge (neighborhood) contain feature vectors
@@ -191,23 +191,23 @@
       </div>
     </section>
 
-    <!-- PIPELINE -->
-    <section id="pipeline" class="section">
-      <h2>Pipeline</h2>
+    <!-- METHOD -->
+    <section id="method" class="section">
+      <h2>Method</h2>
 
       <p>
-        Our system follows the overall structure of a dynamic hypergraph alignment baseline (HyperGCT):
-        we build a hypergraph over candidate correspondences and refine them through hypergraph message passing.
-        Our main change is replacing mean pooling inside hypergraph layers with Wasserstein-based aggregation.
+        We follow a dynamic hypergraph alignment baseline (HyperGCT): build a hypergraph over candidate
+        correspondences and refine them with hypergraph message passing. Our main change replaces mean pooling
+        inside selected hypergraph layers with Wasserstein-based aggregation.
       </p>
 
       <ol class="pipeline">
         <li>
-          <strong>Generate candidate correspondences:</strong>
+          <strong>Candidate generation:</strong>
           form source–target pairs (train: labeled positives/negatives; eval: kNN candidates).
         </li>
         <li>
-          <strong>Build a dynamic hypergraph:</strong>
+          <strong>Dynamic hypergraph construction:</strong>
           treat each candidate pair as a node and group nodes into hyperedges based on geometric consistency.
         </li>
         <li>
@@ -215,87 +215,128 @@
           update node features and predict an inlier confidence score per candidate.
         </li>
         <li>
-          <strong>Wasserstein aggregation (our focus):</strong>
-          replace mean pooling with a distribution-aware aggregation in selected layers
-          (we compare different insertion points).
+          <strong>Wasserstein aggregation:</strong>
+          replace mean pooling with distribution-aware aggregation in selected layers (early vs. late vs. multi-layer).
         </li>
         <li>
           <strong>Hypothesis generation:</strong>
-          use predicted inliers to produce an alignment hypothesis (matching-based alternative to ICP).
+          convert inlier scores into a matching plan and estimate an alignment hypothesis (matching-based alternative to ICP).
         </li>
       </ol>
 
       <details class="details">
-        <summary>What exactly changed vs. baseline?</summary>
+        <summary>What changed from the baseline</summary>
         <div class="details-body">
           <ul>
-            <li>Baseline: mean pooling to summarize features within each hyperedge/neighborhood.</li>
-            <li>Ours: Wasserstein-based aggregation to preserve multi-modal structure in neighborhoods.</li>
-            <li>We study early vs. late vs. multi-layer insertion of the aggregation module.</li>
+            <li>Baseline: mean pooling within each hyperedge/neighborhood.</li>
+            <li>Ours: Wasserstein-based aggregation to preserve multi-modal neighborhood structure.</li>
+            <li>Study: compare insertion points (early vs. late vs. multiple layers).</li>
           </ul>
         </div>
       </details>
     </section>
-    
+
     <!-- EVALUATION -->
     <section id="evaluation" class="section">
       <h2>Evaluation</h2>
 
       <p>
-        We evaluate correspondence prediction as a classification problem over candidate
-        source–target pairs. At evaluation time, the candidate set is built using label-blind
-        feature k-nearest-neighbor (kNN) retrieval between the two point clouds.
+        We evaluate correspondence prediction as binary classification over candidate source–target pairs.
+        At test time, candidates are built using label-blind feature kNN retrieval between the two point clouds.
       </p>
 
       <div class="bullets">
         <div class="card">
-          <h3>Datasets & perturbations</h3>
-          <p>
-            Experiments are conducted on FAUST and PartNet under controlled perturbations.
-            We evaluate rigid and non-rigid settings, including affine / piecewise-rigid regimes.
-            For affine cases, distortion magnitude is controlled by a scalar deformation/noise
-            level σ (e.g., σ = 0 and ranges such as σ ∈ [0, 1.5] and σ ∈ [0, 2]).
-          </p>
+          <h3>Data</h3>
+          <ul>
+            <li><strong>Datasets:</strong> FAUST, PartNet.</li>
+            <li><strong>Settings:</strong> rigid, non-rigid, affine / piecewise-rigid regimes.</li>
+            <li><strong>Perturbations:</strong> deformation/noise level controlled by σ (e.g., σ = 0; ranges such as σ ∈ [0, 1.5], σ ∈ [0, 2]).</li>
+          </ul>
         </div>
 
         <div class="card">
-          <h3>Task metrics (pair classification)</h3>
-          <p>
-            We report standard correspondence classification metrics: precision, recall, and F1,
-            along with training losses (classification loss, graph loss, and matching MSE).
-          </p>
+          <h3>Protocol</h3>
+          <ul>
+            <li><strong>Candidate set:</strong> kNN in feature space (label-blind) between source and target.</li>
+            <li><strong>Prediction:</strong> model outputs an inlier confidence per candidate pair.</li>
+            <li><strong>Matching:</strong> convert confidences into a matching plan via two-stage spectral matching.</li>
+          </ul>
         </div>
 
         <div class="card">
-          <h3>After hypothesis generation</h3>
-          <p>
-            After converting predicted confidences into a matching plan, we evaluate with a
-            distance-aware metric on the resulting correspondences. In our pipeline, greedy
-            and two-stage spectral matching behave similarly and both outperform global spectral,
-            so we use two-stage spectral matching to compute matching plans.
-          </p>
+          <h3>Pair metrics</h3>
+          <ul>
+            <li><strong>Precision / Recall / F1</strong> on candidate inlier classification.</li>
+            <li><strong>Training signals:</strong> classification loss, graph loss, matching MSE (reported as curves/summary values).</li>
+          </ul>
         </div>
 
         <div class="card">
-          <h3>Structural diagnostics (hypergraph quality)</h3>
-          <p>
-            Beyond pair accuracy, we track diagnostics that reflect the learned hypergraph structure:
-            aggregatedness, disjointness, and in-edge distance consistency (variance of point distances
-            among pairs within the same hyperedge). These help interpret robustness and failure modes.
-          </p>
+          <h3>Matching metrics</h3>
+          <ul>
+            <li><strong>Distance-aware error:</strong> deviation from ground-truth target locations over predicted matches.</li>
+            <li><strong>Hypothesis quality:</strong> evaluate correspondence accuracy after converting scores to a matching plan.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>Structure diagnostics</h3>
+          <ul>
+            <li><strong>Aggregatedness:</strong> how concentrated predictions become within hyperedges.</li>
+            <li><strong>Disjointness:</strong> separation between hyperedges / neighborhood overlap behavior.</li>
+            <li><strong>In-edge distance consistency:</strong> variance of point distances among pairs within the same hyperedge.</li>
+          </ul>
         </div>
       </div>
 
       <details class="details">
-        <summary>Optional: metric definitions (math)</summary>
+        <summary>Metric definitions</summary>
         <div class="details-body">
           <p>
+            <strong>Precision / Recall / F1:</strong>
             Precision = TP / (TP + FP), Recall = TP / (TP + FN),
-            and F1 = 2PR / (P + R).
+            F1 = 2PR / (P + R).
           </p>
+
           <p>
-            For distance-aware evaluation, we also measure how far predicted correspondences deviate
-            from ground-truth target locations over the subset of pairs predicted as true.
+            <strong>Aggregatedness:</strong>
+            measures how concentrated predicted inlier mass is within hyperedges.
+            Let <code>s_v</code> be the predicted inlier score for node (candidate pair) <code>v</code>.
+            For each hyperedge <code>e</code> with nodes <code>V(e)</code>, define the normalized mass
+            <code>p_v = s_v / (Σ_{u∈V(e)} s_u + ε)</code>.
+            Aggregatedness is the average concentration over hyperedges:
+          </p>
+          <pre><code>A = (1/|E|) * Σ_{e∈E} Σ_{v∈V(e)} p_v^2</code></pre>
+          <p>
+            Higher <code>A</code> means scores collapse onto a few nodes per hyperedge (more “peaky”);
+            lower <code>A</code> means scores are spread out.
+          </p>
+
+          <p>
+            <strong>Disjointness:</strong>
+            measures how much hyperedges overlap in membership. For hyperedges <code>e</code> and <code>f</code>,
+            define overlap via Jaccard similarity <code>J(e,f) = |V(e)∩V(f)| / |V(e)∪V(f)|</code>.
+            Disjointness is one minus average overlap over sampled/neighboring hyperedge pairs:
+          </p>
+          <pre><code>D = 1 - (1/|P|) * Σ_{(e,f)∈P} J(e,f)</code></pre>
+          <p>
+            Higher <code>D</code> means hyperedges share fewer nodes (cleaner separation).
+          </p>
+
+          <p>
+            <strong>In-edge distance consistency:</strong>
+            measures geometric consistency within each hyperedge. Each node <code>v=(i,j)</code>
+            corresponds to a source point <code>p_i</code> and target point <code>q_j</code>.
+            For a hyperedge <code>e</code>, compute pairwise source distances
+            <code>d_src(v,u)=||p_i - p_{i'}||</code> and target distances
+            <code>d_tgt(v,u)=||q_j - q_{j'}||</code> for nodes <code>v=(i,j)</code>, <code>u=(i',j')</code>.
+            The consistency error per pair is <code>Δ(v,u) = |d_src(v,u) - d_tgt(v,u)|</code>.
+            We report variance within each hyperedge, averaged across hyperedges:
+          </p>
+          <pre><code>C = (1/|E|) * Σ_{e∈E} Var_{v,u∈V(e), v≠u} [ Δ(v,u) ]</code></pre>
+          <p>
+            Lower <code>C</code> means a hyperedge’s correspondences agree more strongly on geometry.
           </p>
         </div>
       </details>
