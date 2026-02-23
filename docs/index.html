@@ -187,6 +187,10 @@
             the same overall structure and replaces this mean pooling step with Wasserstein-based
             aggregation.
           </p>
+          <figure style="margin: 1rem 0 0;">
+            <img src="assets/img/hypergct.png" alt="HyperGCT architecture diagram" style="width:100%;border-radius:6px;" />
+            <figcaption style="font-size:0.8rem;color:#666;text-align:center;margin-top:0.4rem;">HyperGCT pipeline: hypergraph construction, convolution, update blocks, and hypothesis generation.</figcaption>
+          </figure>
         </div>
       </div>
     </section>
@@ -356,15 +360,14 @@
         <li><strong>Takeaway 3:</strong> Robustness behavior can shift across perturbation settings.</li>
       </ul>
 
-      <details class="details">
-        <summary>Future: add 1–2 key plots/tables</summary>
-        <div class="details-body">
-          <p>
-            (Later) Insert a small number of figures that tell the story at a glance.
-            Keep it skimmable.
-          </p>
-        </div>
-      </details>
+      <div style="margin-top:1.5rem;">
+        <iframe
+          src="assets/plots/wass_metrics_grid.html"
+          style="width:100%;height:520px;border:none;border-radius:6px;"
+          title="Validation metrics across Wasserstein aggregation placements"
+          loading="lazy"
+        ></iframe>
+      </div>
     </section>
 
     <!-- LINKS -->
