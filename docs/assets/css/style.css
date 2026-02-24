@@ -207,3 +207,7 @@ body {
 .ablation-table tbody tr.group-start td {
   border-top: 2px solid #d1d5db;
 }
+
+.section {
+  scroll-margin-top: 40px;
+}
