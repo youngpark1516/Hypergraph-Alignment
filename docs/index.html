@@ -407,26 +407,72 @@
 
     <!-- RESULTS -->
     <section id="results" class="section">
-      <h2>Results & takeaways</h2>
+      <h2>Results &amp; takeaways</h2>
+
       <p>
-        Overall, our results indicate that Wasserstein-based aggregation can improve performance
-        over mean pooling and can change robustness behavior across perturbation regimes.
+        WHNN improves F1 over the HyperGCT mean-pooling baseline across all reported settings,
+        but the best Wasserstein aggregation placement depends on dataset and perturbation regime.
+        On FAUST, applying Wasserstein aggregation across all layers performs best, while on PartNet
+        the strongest placements shift under larger deformations.
       </p>
 
       <ul class="takeaways">
-        <li><strong>Takeaway 1:</strong> Distribution-aware aggregation can preserve local structure that averaging loses.</li>
-        <li><strong>Takeaway 2:</strong> Where you insert Wasserstein aggregation (early vs. late) can matter.</li>
-        <li><strong>Takeaway 3:</strong> Robustness behavior can shift across perturbation settings.</li>
+        <li><strong>Consistent gains:</strong> Best WHNN variant outperforms HyperGCT in every reported regime.</li>
+        <li><strong>Placement matters:</strong> The best Wasserstein insertion point changes with deformation severity.</li>
+        <li><strong>Tradeoffs are visible in diagnostics:</strong> Agg/Disj and loss terms help explain why some placements generalize better than others.</li>
       </ul>
 
-      <div class="plot-embed" style="margin-top:1.5rem;">
-        <iframe
-          src="assets/plots/wass_metrics_grid.html"
-          style="width:100%;height:520px;border:none;border-radius:6px;"
-          title="Validation metrics across Wasserstein aggregation placements"
-          loading="lazy"
-        ></iframe>
+      <!-- Headline summary table -->
+      <div class="table-wrap" style="margin-top:1rem;">
+        <table class="results-table summary-table">
+          <thead>
+            <tr>
+              <th>Dataset</th>
+              <th>Best WHNN placement</th>
+              <th>HyperGCT F1</th>
+              <th>Best WHNN F1</th>
+              <th>&Delta;F1</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>FAUST</td>
+              <td>All layers</td>
+              <td>0.978</td>
+              <td><strong>0.991</strong></td>
+              <td><strong>+0.013</strong></td>
+            </tr>
+            <tr>
+              <td>PartNet (0.0&times;)</td>
+              <td>Last 2 layers</td>
+              <td>0.917</td>
+              <td><strong>0.993</strong></td>
+              <td><strong>+0.076</strong></td>
+            </tr>
+            <tr>
+              <td>PartNet (1.5&times;)</td>
+              <td>Last 2 layers</td>
+              <td>0.823</td>
+              <td><strong>0.959</strong></td>
+              <td><strong>+0.136</strong></td>
+            </tr>
+            <tr>
+              <td>PartNet (2.0&times;)</td>
+              <td>First + Last</td>
+              <td>0.782</td>
+              <td><strong>0.956</strong></td>
+              <td><strong>+0.174</strong></td>
+            </tr>
+          </tbody>
+        </table>
       </div>
+
+    <details class="details" style="margin-top:1rem;">
+      <summary>Full ablation table (all metrics)</summary>
+      <div id="ablation-table-slot">
+        <p style="color:#666;">Loading table...</p>
+      </div>
+    </details>
     </section>
 
     <!-- LINKS -->
