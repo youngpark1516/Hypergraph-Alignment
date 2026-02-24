@@ -208,6 +208,54 @@
             cases but can be sensitive to initialization and can struggle under partial overlap,
             noise, and non-rigid deformation.
           </p>
+          <!-- ICP technical note -->
+          <details class="details">
+            <summary>Technical note: ICP</summary>
+            <div class="details-body">
+              <p>
+                ICP (Iterative Closest Point) is a classical rigid registration method that alternates between
+                estimating correspondences and updating a rigid transform. Given source points
+                \( \{x_i\}_{i=1}^{N} \) and target points \( \{y_j\}_{j=1}^{M} \), ICP repeatedly:
+              </p>
+
+              <ol>
+                <li>
+                  <strong>Assign correspondences</strong> by nearest neighbor under the current transform
+                  \( (R,t) \):
+                  <div class="eq">
+                    \[
+                      j(i) = \arg\min_{j} \left\| R x_i + t - y_j \right\|_2
+                    \]
+                  </div>
+                </li>
+                <li>
+                  <strong>Update the rigid transform</strong> by minimizing alignment error over the assigned pairs:
+                  <div class="eq">
+                    \[
+                      (R,t)=\arg\min_{R\in SO(3),\,t\in\mathbb{R}^3}
+                      \sum_{i=1}^{N} \left\| R x_i + t - y_{j(i)} \right\|_2^2
+                    \]
+                  </div>
+                </li>
+              </ol>
+
+              <p>
+                In practice, the transform update is typically solved with a least-squares rigid alignment step
+                (e.g., SVD/Procrustes-style update after centering the matched points).
+              </p>
+
+              <p>
+                <strong>Why ICP is a useful baseline:</strong> it is simple, fast, and often strong for rigid or
+                near-rigid registration when initialization is good.
+              </p>
+
+              <p>
+                <strong>Common failure modes:</strong> ICP can degrade under poor initialization, outliers,
+                partial overlap, and non-rigid deformation because nearest-neighbor assignments may become unstable
+                or geometrically inconsistent early in optimization.
+              </p>
+            </div>
+          </details>
         </div>
 
         <div class="card">
@@ -225,6 +273,93 @@
               HyperGCT pipeline: hypergraph construction, convolution, update blocks, and hypothesis generation.
             </figcaption>
           </figure>
+          <!-- HyperGCT technical note -->
+          <details class="details">
+            <summary>Technical note: HyperGCT (dynamic hypergraph baseline)</summary>
+            <div class="details-body">
+              <p>
+                HyperGCT-style alignment treats <em>candidate correspondences</em> as the main objects to score,
+                rather than directly regressing a transform from raw point clouds.
+                A candidate node is a source–target pair
+                \( v=(i,j) \), where source point \( p_i \) is paired with target point \( q_j \).
+              </p>
+
+              <p>
+                The key idea is to model <strong>higher-order geometric consistency</strong> among candidate
+                correspondences using a <strong>hypergraph</strong>:
+              </p>
+              <ul>
+                <li><strong>Nodes:</strong> candidate correspondences \( v=(i,j) \)</li>
+                <li>
+                  <strong>Hyperedges:</strong> groups of candidates that are likely to be geometrically compatible
+                  (e.g., similar local distance/structure patterns)
+                </li>
+              </ul>
+
+              <p>
+                This is more expressive than a standard pairwise graph because a hyperedge can summarize consistency
+                over a set of candidates at once, which is useful when local geometry is noisy or ambiguous.
+              </p>
+
+              <p>
+                In a HyperGCT-style pipeline, the model iteratively performs:
+              </p>
+              <ol>
+                <li><strong>Candidate construction</strong> (train/eval candidate pairs)</li>
+                <li><strong>Dynamic hypergraph construction/refinement</strong> over candidate nodes</li>
+                <li>
+                  <strong>Hypergraph message passing</strong> to update candidate features using neighborhood
+                  (hyperedge) information
+                </li>
+                <li><strong>Inlier scoring</strong> for each candidate correspondence</li>
+                <li>
+                  <strong>Hypothesis generation / matching</strong> to convert scores into a correspondence plan
+                  and alignment hypothesis
+                </li>
+              </ol>
+
+              <p>
+                A simplified hypergraph message-passing view is:
+              </p>
+
+              <div class="eq">
+                \[
+                  h_v^{(\ell+1)} = \phi^{(\ell)}\!\Big(
+                    h_v^{(\ell)},
+                    \operatorname{Agg}_{e \ni v}\big(\{h_u^{(\ell)} : u \in V(e)\}\big)
+                  \Big)
+                \]
+              </div>
+
+              <p>
+                where \( h_v^{(\ell)} \) is the feature of candidate node \( v \) at layer \( \ell \),
+                \( V(e) \) is the node set of hyperedge \( e \), \( \operatorname{Agg} \) aggregates neighborhood
+                information, and \( \phi^{(\ell)} \) denotes the learnable update block.
+              </p>
+
+              <p>
+                In the standard baseline, hyperedge/neighborhood aggregation is typically implemented with a simple
+                mean-style pooling operator:
+              </p>
+
+              <div class="eq">
+                \[
+                  m_e^{(\ell)} = \frac{1}{|V(e)|}\sum_{u\in V(e)} h_u^{(\ell)}
+                \]
+              </div>
+
+              <p>
+                <strong>What our project changes:</strong> we keep the HyperGCT-style dynamic hypergraph pipeline
+                and candidate scoring setup, but replace this mean hyperedge aggregation step with a
+                Wasserstein-based aggregation in selected layers (first / last / multiple-layer placements).
+              </p>
+
+              <p>
+                This isolates the effect of a distribution-aware aggregation operator while preserving the overall
+                baseline structure for a fair placement study.
+              </p>
+            </div>
+          </details>
         </div>
       </div>
     </section>
@@ -234,42 +369,132 @@
       <h2>Method</h2>
 
       <p>
-        We follow a dynamic hypergraph alignment baseline (HyperGCT): build a hypergraph over candidate
-        correspondences and refine them with hypergraph message passing. Our main change replaces mean pooling
-        inside selected hypergraph layers with Wasserstein-based aggregation.
+        We use a HyperGCT-style dynamic hypergraph alignment pipeline as the base architecture and
+        isolate one design choice: the hyperedge (neighborhood) aggregation operator used during
+        hypergraph message passing. The baseline uses mean pooling; our WHNN variants replace this
+        operator with a Wasserstein-based, distribution-aware aggregation in selected layers.
+      </p>
+
+      <p>
+        This setup lets us study <em>where</em> Wasserstein aggregation is most effective while keeping
+        the rest of the pipeline (candidate construction, hypergraph updates, scoring, and matching/hypothesis
+        generation) as consistent as possible.
       </p>
 
       <ol class="pipeline">
         <li>
           <strong>Candidate generation:</strong>
-          form source–target pairs (train: labeled positives/negatives; eval: kNN candidates).
+          construct source–target candidate pairs \( v=(i,j) \) (training: labeled positives/negatives;
+          evaluation: feature-space kNN candidates).
         </li>
         <li>
           <strong>Dynamic hypergraph construction:</strong>
-          treat each candidate pair as a node and group nodes into hyperedges based on geometric consistency.
+          treat each candidate pair as a node and group candidate nodes into hyperedges that capture
+          higher-order geometric compatibility.
         </li>
         <li>
           <strong>Hypergraph message passing:</strong>
-          update node features and predict an inlier confidence score per candidate.
+          update candidate features over multiple layers using hyperedge-level neighborhood aggregation,
+          then predict an inlier confidence score for each candidate pair.
         </li>
         <li>
-          <strong>Wasserstein aggregation:</strong>
-          replace mean pooling with distribution-aware aggregation in selected layers (early vs. late vs. multi-layer).
+          <strong>Wasserstein aggregation (our modification):</strong>
+          in selected layers, replace mean hyperedge aggregation with a distribution-aware aggregation
+          based on Wasserstein-style comparison of neighborhood feature distributions.
         </li>
         <li>
-          <strong>Hypothesis generation:</strong>
-          convert inlier scores into a matching plan and estimate an alignment hypothesis (matching-based alternative to ICP).
+          <strong>Matching / hypothesis generation:</strong>
+          convert predicted inlier scores into a matching plan and alignment hypothesis (including our
+          matching-based alternative to ICP in the relevant experiments).
         </li>
       </ol>
 
       <details class="details">
-        <summary>What changed from the baseline</summary>
+        <summary>Technical note: Aggregation replacement (baseline vs WHNN)</summary>
+        <div class="details-body">
+          <p>
+            Let \( h_u^{(\ell)} \in \mathbb{R}^d \) denote the feature of candidate node \( u \) at layer \( \ell \),
+            and let \( V(e) \) be the node set of hyperedge \( e \).
+          </p>
+
+          <p>
+            In a simplified HyperGCT-style layer, node updates use aggregated neighborhood information:
+          </p>
+
+          <div class="eq">
+            \[
+              h_v^{(\ell+1)} =
+              \phi^{(\ell)}\!\Big(
+                h_v^{(\ell)},
+                \operatorname{Agg}_{e \ni v}\big(\{h_u^{(\ell)} : u \in V(e)\}\big)
+              \Big)
+            \]
+          </div>
+
+          <p>
+            The baseline aggregation within a hyperedge is mean pooling:
+          </p>
+
+          <div class="eq">
+            \[
+              m_{e,\text{mean}}^{(\ell)} = \frac{1}{|V(e)|}\sum_{u \in V(e)} h_u^{(\ell)}
+            \]
+          </div>
+
+          <p>
+            In WHNN variants, we replace this with a distribution-aware aggregation. Conceptually, we treat
+            the hyperedge features as an empirical measure
+            \(
+              \mu_e^{(\ell)} = \frac{1}{|V(e)|}\sum_{u \in V(e)} \delta(h_u^{(\ell)})
+            \)
+            and compute a Wasserstein-style summary relative to learned/reference features. The resulting
+            aggregation output is then used in the same message-passing update block in place of mean pooling.
+          </p>
+
+          <p>
+            Intuitively, this preserves more information about how feature mass is distributed inside the
+            neighborhood (e.g., multi-modal structure) than a single mean vector.
+          </p>
+        </div>
+      </details>
+
+      <details class="details">
+        <summary>Technical note: Placement configurations (ablation variable)</summary>
+        <div class="details-body">
+          <p>
+            Our main ablation studies <strong>where</strong> Wasserstein aggregation is inserted in the
+            hypergraph message-passing stack. We evaluate the following placement variants:
+          </p>
+
+          <ul>
+            <li><strong>First layer</strong></li>
+            <li><strong>First 2 layers</strong></li>
+            <li><strong>Last layer</strong></li>
+            <li><strong>Last 2 layers</strong></li>
+            <li><strong>First + Last</strong></li>
+            <li><strong>All layers</strong></li>
+          </ul>
+
+          <p>
+            Each variant keeps the same overall pipeline and output head, changing only the aggregation operator
+            at the specified layers. This isolates placement effects and supports a fair comparison against the
+            mean-pooling HyperGCT baseline.
+          </p>
+        </div>
+      </details>
+
+      <details class="details">
+        <summary>What is held constant in the ablation</summary>
         <div class="details-body">
           <ul>
-            <li>Baseline: mean pooling within each hyperedge/neighborhood.</li>
-            <li>Ours: Wasserstein-based aggregation to preserve multi-modal neighborhood structure.</li>
-            <li>Study: compare insertion points (early vs. late vs. multiple layers).</li>
+            <li><strong>Fixed:</strong> candidate construction protocol, dynamic hypergraph pipeline structure, scoring head, and evaluation metrics.</li>
+            <li><strong>Varied:</strong> hyperedge aggregation operator placement (mean vs Wasserstein-based in selected layers).</li>
+            <li><strong>Reported:</strong> pair classification metrics (Precision/Recall/F1), optimization terms/diagnostics, and downstream matching quality.</li>
           </ul>
+          <p>
+            This experimental design is intended to attribute performance differences primarily to the aggregation
+            operator and its placement, rather than to changes in the surrounding architecture.
+          </p>
         </div>
       </details>
     </section>
