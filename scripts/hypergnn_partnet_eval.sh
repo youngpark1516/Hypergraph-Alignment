@@ -1,2 +1,2 @@
 # First export MODEL_PATH=snapshot/...
-python -m src.project.hypergnn_main --use_features true --dataset partnet --root data/partnet/fpfh_affine_2-0 --eval_snapshot ${MODEL_PATH}  --config ${DATA_PATH} --generation_method spectral-2
+python -m src.project.hypergnn_main --use_features true --dataset partnet --root ${DATA_PATH} --eval_snapshot ${MODEL_PATH}  --config src/project/config/hypergnn_partnet_eval.yaml --generation_method spectral-2
