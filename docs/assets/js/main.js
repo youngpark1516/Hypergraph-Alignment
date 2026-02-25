@@ -11,3 +11,16 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
 
 // footer year
 document.getElementById("year").textContent = new Date().getFullYear();
+document.addEventListener("DOMContentLoaded", async () => {
+  const slot = document.getElementById("ablation-table-slot");
+  if (!slot) return;
+
+  try {
+    const res = await fetch("assets/tables/ablation-table.html");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    slot.innerHTML = await res.text();
+  } catch (err) {
+    slot.innerHTML = '<p style="color:#b00020;">Failed to load ablation table.</p>';
+    console.error("Ablation table load error:", err);
+  }
+});

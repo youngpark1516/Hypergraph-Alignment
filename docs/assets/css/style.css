@@ -1,19 +1,39 @@
-:root { color-scheme: light; }
+:root {
+  color-scheme: light;
+
+  /* Softer light theme */
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-muted: #fbfbfc;
+  --surface-soft: #f3f4f6;
+
+  --text: #1f2937;        /* body */
+  --text-strong: #111827; /* headings */
+  --text-muted: #4b5563;
+
+  --border: #e5e7eb;
+  --border-soft: #eceff3;
+
+  --hover: #f3f4f6;
+
+  --brand: #111827;
+  --brand-contrast: #ffffff;
+}
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   line-height: 1.55;
-  background: #ffffff;
-  color: #111;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .site-header {
   position: sticky;
   top: 0;
-  background: rgba(255,255,255,0.9);
-  border-bottom: 1px solid #eee;
+  background: rgba(246, 247, 249, 0.88);
+  border-bottom: 1px solid var(--border);
   backdrop-filter: blur(8px);
   z-index: 10;
 }
@@ -27,22 +47,22 @@ body {
   align-items: center;
 }
 
-.brand { font-weight: 700; text-decoration: none; color: #111; }
+.brand { font-weight: 700; text-decoration: none; color: var(--text-strong); }
 
 .nav-links a {
   margin-left: 14px;
   text-decoration: none;
-  color: #333;
+  color: var(--text-muted);
   font-size: 14px;
 }
 
 .container { max-width: 980px; margin: 0 auto; padding: 18px; }
 
 .hero { padding: 42px 0 20px; }
-.subtitle { color: #444; max-width: 70ch; }
+.subtitle { color: var(--text-muted); max-width: 70ch; }
 
-.section { padding: 28px 0; border-top: 1px solid #f0f0f0; }
-.section h2 { margin-top: 0; }
+.section { padding: 28px 0; border-top: 1px solid var(--border-soft); }
+.section h2 { margin-top: 0; color: var(--text-strong); }
 
 .cta-row { display: flex; gap: 12px; margin-top: 14px; }
 
@@ -50,26 +70,31 @@ body {
   display: inline-block;
   padding: 10px 14px;
   border-radius: 10px;
-  background: #111;
-  color: #fff;
+  background: var(--brand);
+  color: var(--brand-contrast);
   text-decoration: none;
   font-weight: 600;
 }
-.btn-outline { background: transparent; color: #111; border: 1px solid #111; }
+.btn-outline { background: transparent; color: var(--brand); border: 1px solid var(--brand); }
 
 .people { margin-top: 10px; display: grid; gap: 8px; }
-.people-block { padding: 10px 12px; border: 1px solid #eee; border-radius: 12px; background: #fafafa; }
-.people-title { font-weight: 750; font-size: 13px; color: #333; margin-bottom: 4px; }
-.people-list { color: #555; font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+.people-block {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+.people-title { font-weight: 750; font-size: 13px; color: var(--text-muted); margin-bottom: 4px; }
+.people-list { color: var(--text-muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
 
 .details {
   margin-top: 12px;
-  border: 1px solid #eee;
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 10px 12px;
-  background: #fafafa;
+  background: var(--surface-muted);
 }
-.details summary { cursor: pointer; font-weight: 600; }
+.details summary { cursor: pointer; font-weight: 600; color: var(--text-strong); }
 .details-body { padding-top: 10px; }
 
 .grid {
@@ -82,12 +107,133 @@ body {
 }
 
 .card {
-  border: 1px solid #eee;
+  border: 1px solid var(--border);
   border-radius: 14px;
   padding: 12px;
-  background: #fff;
+  background: var(--surface);
 }
-.card img { width: 100%; border-radius: 10px; border: 1px solid #f0f0f0; }
+.card img { width: 100%; border-radius: 10px; border: 1px solid var(--border-soft); }
 
-.footer { padding: 24px 0 40px; color: #666; font-size: 14px; }     
+.footer { padding: 24px 0 40px; color: var(--text-muted); font-size: 14px; }
 
+/* Table wrapper */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin-top: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+/* Base tables */
+.results-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.results-table th,
+.results-table td {
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Default left-align first 3 columns for normal result tables */
+.results-table th:first-child,
+.results-table td:first-child,
+.results-table th:nth-child(2),
+.results-table td:nth-child(2),
+.results-table th:nth-child(3),
+.results-table td:nth-child(3) {
+  text-align: left;
+}
+
+.results-table thead th {
+  position: sticky;
+  top: 0; /* change to 56px if sticky site header overlaps */
+  background: var(--surface);
+  z-index: 1;
+}
+
+.results-table tbody tr:hover {
+  background: var(--hover);
+}
+
+.summary-table {
+  min-width: 640px;
+}
+
+/* Ablation table (compact) */
+.ablation-table {
+  min-width: 860px; /* override base 980px */
+  font-size: 0.8rem;
+}
+
+.ablation-table th,
+.ablation-table td {
+  padding: 0.38rem 0.42rem;
+  line-height: 1.2;
+}
+
+/* --- IMPORTANT FIX ---
+   Use explicit column classes instead of nth-child, because rowspan shifts cell positions per row. */
+
+/* Column alignment */
+.ablation-table th.col-dataset,
+.ablation-table td.col-dataset,
+.ablation-table th.col-model,
+.ablation-table td.col-model,
+.ablation-table th.col-wass,
+.ablation-table td.col-wass {
+  text-align: left;
+}
+
+.ablation-table th.col-metric,
+.ablation-table td.col-metric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Column widths */
+.ablation-table th.col-dataset,
+.ablation-table td.col-dataset {
+  min-width: 105px;
+}
+
+.ablation-table th.col-model,
+.ablation-table td.col-model {
+  min-width: 68px;
+}
+
+.ablation-table th.col-wass,
+.ablation-table td.col-wass {
+  min-width: 104px;
+  white-space: normal;
+  line-height: 1.15;
+}
+
+.ablation-table th.col-metric,
+.ablation-table td.col-metric {
+  min-width: 54px;
+}
+
+/* Grouped dataset label cell */
+.ablation-table td[rowspan] {
+  vertical-align: top;
+  font-weight: 600;
+  background: var(--surface-soft);
+}
+
+/* Stronger separators between dataset blocks */
+.ablation-table tbody tr.group-start td {
+  border-top: 2px solid #d1d5db;
+}
+
+.section {
+  scroll-margin-top: 40px;
+}
