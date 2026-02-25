@@ -1,0 +1,1 @@
+python -m src.project.hypergnn_main --use_features true  --dataset faust --full_data --root ${DATA_PATH} --eval_snapshot ${MODEL_PATH} --config src/project/config/hypergnn_faust.yaml --generation_method spectral-2
