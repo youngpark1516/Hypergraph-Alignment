@@ -536,17 +536,17 @@ class Trainer(object):
                                     mean_l2_err = float(np.linalg.norm(diff, axis=1).mean())
                                     selected_abs_err_meter.update(mean_abs_err)
                                     selected_l2_err_meter.update(mean_l2_err)
+                                print(
+                                    f"initial dataset target distance error: "
+                                    f"mean|y_pred-y_gt|={mean_abs_err_all:.6f}, "
+                                    f"mean_l2={mean_l2_err_all:.6f}"
+                                )
                                 if selected_total > 0:
                                     print(
                                         f"selected target distance error: "
                                         f"mean|y_pred-y_gt|={mean_abs_err:.6f}, "
                                         f"mean_l2={mean_l2_err:.6f}"
                                     )
-                                print(
-                                    f"initial dataset target distance error: "
-                                    f"mean|y_pred-y_gt|={mean_abs_err_all:.6f}, "
-                                    f"mean_l2={mean_l2_err_all:.6f}"
-                                )
                             except Exception as exc:
                                 print(f"selected target distance error unavailable: {exc}")
 
@@ -606,17 +606,17 @@ class Trainer(object):
                     meter_dict[key].update(stats[key])
 
         self.model.train()
-        if self.generate and selected_abs_err_meter.count > 0:
-            print(
-                f"selected target distance error (mean over {selected_abs_err_meter.count} files): "
-                f"mean|y_pred-y_gt|={selected_abs_err_meter.avg:.6f}, "
-                f"mean_l2={selected_l2_err_meter.avg:.6f}"
-            )
         if self.generate and initial_abs_err_meter.count > 0:
             print(
                 f"initial dataset target distance error (mean over {initial_abs_err_meter.count} files): "
                 f"mean|y_pred-y_gt|={initial_abs_err_meter.avg:.6f}, "
                 f"mean_l2={initial_l2_err_meter.avg:.6f}"
+            )
+        if self.generate and selected_abs_err_meter.count > 0:
+            print(
+                f"selected target distance error (mean over {selected_abs_err_meter.count} files): "
+                f"mean|y_pred-y_gt|={selected_abs_err_meter.avg:.6f}, "
+                f"mean_l2={selected_l2_err_meter.avg:.6f}"
             )
         res = {
             'sm_loss': meter_dict['sm_loss'].avg,

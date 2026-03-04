@@ -58,6 +58,7 @@ def build_dataloaders(args):
             include_gt_trans=include_gt_trans,
             seed=args.split_seed,
             force_add_true_pairs=True,
+            max_corr=args.max_corr,
         )
         val_set = FullAlignmentDataset(
             val_files,
@@ -67,6 +68,7 @@ def build_dataloaders(args):
             include_gt_trans=include_gt_trans,
             seed=args.split_seed + 1,
             force_add_true_pairs=True,
+            max_corr=args.max_corr,
         )
     else:
         train_set = None if eval_only else AlignmentDataset(
@@ -106,17 +108,22 @@ def build_dataloaders(args):
     if hasattr(val_set, "summarize_true_pair_coverage"):
         val_cov = val_set.summarize_true_pair_coverage()
         args.val_true_pair_coverage = val_cov["overall_coverage"]
-        if train_set is not None and hasattr(train_set, "summarize_true_pair_coverage"):
-            train_cov = train_set.summarize_true_pair_coverage()
-            args.train_true_pair_coverage = train_cov["overall_coverage"]
-            print(
-                f"Train true-pair@k coverage: {100.0 * train_cov['overall_coverage']:.2f}% "
-                f"({train_cov['total_true_after_force']}/{train_cov['total_sampled_sources']})"
-            )
-        print(
-            f"Val true-pair@k coverage: {100.0 * val_cov['overall_coverage']:.2f}% "
-            f"({val_cov['total_true_after_force']}/{val_cov['total_sampled_sources']})"
-        )
+        print("Val true-pair stats:")
+        for key in sorted(val_cov.keys()):
+            value = val_cov[key]
+            if isinstance(value, float):
+                print(f"  {key}: {value:.6f}")
+            else:
+                print(f"  {key}: {value}")
+    elif hasattr(val_set, "summarize_selection_stats"):
+        val_sel = val_set.summarize_selection_stats()
+        print("Val selection stats:")
+        for key in sorted(val_sel.keys()):
+            value = val_sel[key]
+            if isinstance(value, float):
+                print(f"  {key}: {value:.6f}")
+            else:
+                print(f"  {key}: {value}")
     return train_loader, val_loader
 
 
@@ -155,9 +162,10 @@ def main():
         args.pretrain = args.eval_snapshot
     if args.mode == "test":
         args.batch_size = 1
-    os.makedirs(args.snapshot_dir, exist_ok=True)
-    os.makedirs(args.save_dir, exist_ok=True)
-    os.makedirs(args.tboard_dir, exist_ok=True)
+    if not args.mode == "test":
+        os.makedirs(args.snapshot_dir, exist_ok=True)
+        os.makedirs(args.save_dir, exist_ok=True)
+        os.makedirs(args.tboard_dir, exist_ok=True)
 
     train_loader, val_loader = build_dataloaders(args)
 
