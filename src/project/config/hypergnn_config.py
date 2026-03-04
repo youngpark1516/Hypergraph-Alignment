@@ -69,6 +69,8 @@ data_arg.add_argument('--feature_dim', type=int, default=33)
 data_arg.add_argument('--neg_ratio', type=float, default=2.0)
 data_arg.add_argument('--full_data', action='store_true', default=False,
                       help='use FullAlignmentDataset (kNN feature-space pairing)')
+data_arg.add_argument('--max_corr', type=int, default=-1,
+                      help='filter out files with more than this many correspondences (FullAlignmentDataset only)')
 data_arg.add_argument('--seed_ratio', type=float, default=0.2, help='max ratio of seeding points')
 data_arg.add_argument('--num_node', type=int, default=512)
 data_arg.add_argument('--augment_axis', type=int, default=3)

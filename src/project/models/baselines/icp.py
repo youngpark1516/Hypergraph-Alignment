@@ -400,9 +400,6 @@ def batch_run_icp_full_eval(args) -> str:
 	rng.shuffle(indices)
 	split = int(len(files) * (1.0 - args.val_ratio))
 	val_files = [files[i] for i in indices[split:]]
-	if not val_files:
-		val_files = list(files)
-		print("Warning: val split is empty — using all files.")
 
 	if (args.eval_snapshot or args.mode == "test") and args.eval_num > 0:
 		eval_count = min(args.eval_num, len(val_files))
@@ -414,15 +411,31 @@ def batch_run_icp_full_eval(args) -> str:
 			f"(eval_seed={args.eval_seed})"
 		)
 
-	val_set = FullAlignmentDataset(
-		val_files,
-		num_corr=args.num_node,
-		use_features=args.use_features,
-		feature_dim=args.feature_dim,
-		include_gt_trans=False,
-		seed=args.split_seed + 1,
-		force_add_true_pairs=True,
-	)
+	if args.full_data:
+		val_set = FullAlignmentDataset(
+			val_files,
+			num_corr=args.num_node,
+			use_features=args.use_features,
+			feature_dim=args.feature_dim,
+			include_gt_trans=False,
+			seed=args.split_seed + 1,
+			force_add_true_pairs=True,
+			max_corr=getattr(args, "max_corr", 0),
+		)
+	else:
+		try:
+			from project.dataset import AlignmentDataset
+		except ImportError:
+			from src.project.dataset import AlignmentDataset
+		val_set = AlignmentDataset(
+			val_files,
+			num_corr=args.num_node,
+			use_features=args.use_features,
+			feature_dim=args.feature_dim,
+			neg_ratio=args.neg_ratio,
+			include_gt_trans=False,
+			seed=args.split_seed + 1,
+		)
 	val_loader = DataLoader(
 		val_set,
 		batch_size=1,
@@ -430,6 +443,7 @@ def batch_run_icp_full_eval(args) -> str:
 		num_workers=args.num_workers,
 		drop_last=False,
 	)
+	print(f"ICP eval using {len(val_set)} files.")
 
 	root_stem = root.name
 	out_dir = args.out or f"results/icp_full_{args.dataset}_{root_stem}"
@@ -442,7 +456,7 @@ def batch_run_icp_full_eval(args) -> str:
 
 		fn_single = file_name[0] if isinstance(file_name, (list, tuple)) else str(file_name)
 		stem = os.path.splitext(os.path.basename(fn_single))[0]
-		print(f"\n[{i+1}/{len(val_files)}] {stem}")
+		print(f"\n[{i+1}/{len(val_set)}] {stem}")
 
 		data = np.load(fn_single)
 		if 'xyz0' in data and 'xyz1' in data:
@@ -459,13 +473,30 @@ def batch_run_icp_full_eval(args) -> str:
 		init_mat = _build_init_transform(data, src_pts, tgt_pts, args.init_from_fpfh, None, "corres")
 		src_idx_np = src_indices.squeeze(0).detach().cpu().numpy()
 		tgt_idx_np = tgt_indices.squeeze(0).detach().cpu().numpy()
+		if getattr(args, "fit_all_pairs", False):
+			src_unique = np.unique(src_idx_np.astype(np.int64, copy=False))
+			tgt_unique = np.unique(tgt_idx_np.astype(np.int64, copy=False))
+			if src_unique.size >= 3 and tgt_unique.size >= 3:
+				src_pts_icp = src_pts[src_unique]
+				tgt_pts_icp = tgt_pts[tgt_unique]
+			else:
+				print("Warning: fit_all_pairs selected <3 points; falling back to full clouds.")
+				src_pts_icp = src_pts
+				tgt_pts_icp = tgt_pts
+		else:
+			src_pts_icp = src_pts
+			tgt_pts_icp = tgt_pts
+		if getattr(args, "eval_all_pairs", False):
+			corres_np = data["corres"].astype(np.int64)
+			src_idx_np = np.arange(corres_np.shape[0], dtype=np.int64)
+			tgt_idx_np = corres_np[src_idx_np]
 		init_abs, init_l2, num_eval = _compute_pairlist_errors(
 			tgt_pts=tgt_pts,
 			corres=data["corres"].astype(np.int64),
 			src_indices=src_idx_np,
 			tgt_indices=tgt_idx_np,
 		)
-		res = _run_icp(src_pts, tgt_pts, args.icp_threshold, init_mat)
+		res = _run_icp(src_pts_icp, tgt_pts_icp, args.icp_threshold, init_mat)
 		mean_abs, mean_l2, _ = _compute_icp_pair_errors(
 			src_pts=src_pts,
 			tgt_pts=tgt_pts,
@@ -572,6 +603,10 @@ def _full_icp_eval_main():
 	parser.add_argument("--use_features", type=_str2bool, default=True)
 	parser.add_argument("--feature_dim", type=int, default=33)
 	parser.add_argument("--num_node", type=int, default=512)
+	parser.add_argument("--full_data", action="store_true", default=False)
+	parser.add_argument("--neg_ratio", type=float, default=2.0)
+	parser.add_argument("--max_corr", type=int, default=0,
+		help="filter out files with more than this many correspondences (FullAlignmentDataset only)")
 	parser.add_argument("--num_workers", type=int, default=12)
 	parser.add_argument("--split_seed", type=int, default=0)
 	parser.add_argument("--eval_snapshot", type=str, default="")
@@ -582,6 +617,10 @@ def _full_icp_eval_main():
 	parser.add_argument("--icp_threshold", type=float, default=float("inf"))
 	parser.add_argument("--out", type=str, default=None)
 	parser.add_argument("--no-fpfh-init", action="store_true")
+	parser.add_argument("--eval_all_pairs", action="store_true",
+		help="evaluate ICP errors on all correspondences instead of dataset-sampled indices")
+	parser.add_argument("--fit_all_pairs", action="store_true",
+		help="run ICP on all pairs instead of subsets of src/tgt points that appear in dataset-sampled pairs")
 
 	initial_args, _ = parser.parse_known_args()
 	config_path = initial_args.config or _cfg_map.get(initial_args.dataset)

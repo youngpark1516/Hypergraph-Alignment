@@ -109,6 +109,44 @@ class AlignmentDataset(Dataset):
             str(path),
         )
 
+    def summarize_selection_stats(self):
+        if len(self.files) == 0:
+            return {
+                "num_samples": 0,
+                "mean_src_selected_pct": 0.0,
+                "mean_tgt_selected_pct": 0.0,
+            }
+
+        src_pcts = []
+        tgt_pcts = []
+        for idx, path in enumerate(self.files):
+            data = np.load(path)
+            xyz0 = data["xyz0"].astype(np.float32)
+            xyz1 = data["xyz1"].astype(np.float32)
+            corres = data["corres"].astype(np.int64)
+            if corres.shape[0] != xyz0.shape[0]:
+                raise ValueError(f"corres size mismatch in {path}")
+            if corres.max() >= xyz1.shape[0]:
+                raise ValueError(f"corres index out of range in {path}")
+
+            rng = np.random.default_rng(self.seed + idx)
+            src_idx = self._sample_indices(corres.shape[0], rng)
+            tgt_idx = corres[src_idx]
+            if idx % 100 == 0:
+                print(f"Processed {idx} / {len(self.files)} files")
+                print(f"  {src_idx.shape[0]} source indices sampled out of {xyz0.shape[0]} total")
+            src_selected_pct = float(src_idx.shape[0] / xyz0.shape[0]) if xyz0.shape[0] > 0 else 0.0
+            tgt_selected_unique = int(np.unique(tgt_idx).shape[0]) if tgt_idx.size > 0 else 0
+            tgt_selected_pct = float(tgt_selected_unique / xyz1.shape[0]) if xyz1.shape[0] > 0 else 0.0
+            src_pcts.append(src_selected_pct)
+            tgt_pcts.append(tgt_selected_pct)
+
+        return {
+            "num_samples": len(self.files),
+            "mean_src_selected_pct": float(np.mean(src_pcts)),
+            "mean_tgt_selected_pct": float(np.mean(tgt_pcts)),
+        }
+
 
 class FullAlignmentDataset(Dataset):
     def __init__(
@@ -119,10 +157,11 @@ class FullAlignmentDataset(Dataset):
         feature_dim,
         include_gt_trans,
         seed,
-        k=10,
+        k=5,
         force_add_true_pairs=False,
+        max_corr=-1,
     ):
-        self.files = files
+        self.files = list(files)
         self.num_corr = num_corr
         self.use_features = use_features
         self.feature_dim = feature_dim
@@ -130,10 +169,23 @@ class FullAlignmentDataset(Dataset):
         self.seed = seed
         self.k = int(k)
         self.force_add_true_pairs = bool(force_add_true_pairs)
+        self.max_corr = int(max_corr) if max_corr is not None else 0
         self._coverage_cache = None
+        if self.max_corr > 0:
+            self.files = self._filter_max_corr(self.files, self.max_corr)
 
     def __len__(self):
         return len(self.files)
+
+    def _filter_max_corr(self, files, max_corr):
+        kept = []
+        for path in files:
+            data = np.load(path)
+            if "corres" not in data:
+                raise ValueError(f"'corres' missing in {path}")
+            if int(data["corres"].shape[0]) <= max_corr:
+                kept.append(path)
+        return kept
 
     def _sample_indices(self, total, rng):
         if self.num_corr is None or self.num_corr <= 0:
@@ -177,11 +229,31 @@ class FullAlignmentDataset(Dataset):
         if corres.max() >= xyz1.shape[0]:
             raise ValueError(f"corres index out of range in {path}")
 
-        src_idx, _, true_in_knn = self._compute_knn_membership(idx, corres, feat0, feat1)
+        src_idx, knn_tgt, true_in_knn = self._compute_knn_membership(idx, corres, feat0, feat1)
         num_sampled_sources = int(src_idx.shape[0])
         num_true_in_knn = int(true_in_knn.sum())
         coverage = float(num_true_in_knn / num_sampled_sources) if num_sampled_sources > 0 else 0.0
         coverage_after_force_add = 1.0 if (self.force_add_true_pairs and num_sampled_sources > 0) else coverage
+
+        k_eff = knn_tgt.shape[1]
+        src_rep = np.repeat(src_idx, k_eff)
+        tgt_flat = knn_tgt.reshape(-1).astype(np.int64, copy=False)
+        if self.force_add_true_pairs:
+            gt_tgt = corres[src_idx]
+            missing_true = ~true_in_knn
+            if missing_true.any():
+                add_src = src_idx[missing_true]
+                add_tgt = gt_tgt[missing_true]
+                src_rep = np.concatenate([src_rep, add_src])
+                tgt_flat = np.concatenate([tgt_flat, add_tgt])
+
+        src_selected_pct = float(num_sampled_sources / xyz0.shape[0]) if xyz0.shape[0] > 0 else 0.0
+        tgt_selected_unique = int(np.unique(tgt_flat).shape[0]) if tgt_flat.size > 0 else 0
+        tgt_selected_pct = float(tgt_selected_unique / xyz1.shape[0]) if xyz1.shape[0] > 0 else 0.0
+
+        if idx % 100 == 0:
+            print(f"Processed {idx} / {len(self.files)} files")
+            print(f"  {src_idx.shape[0]} source indices sampled out of {xyz0.shape[0]} total")
         return {
             "index": int(idx),
             "path": str(path),
@@ -189,6 +261,8 @@ class FullAlignmentDataset(Dataset):
             "num_true_in_knn": num_true_in_knn,
             "coverage": coverage,
             "coverage_after_force_add": float(coverage_after_force_add),
+            "src_selected_pct": src_selected_pct,
+            "tgt_selected_pct": tgt_selected_pct,
         }
 
     def summarize_true_pair_coverage(self):
@@ -204,17 +278,23 @@ class FullAlignmentDataset(Dataset):
                 "overall_coverage": 0.0,
                 "mean_coverage": 0.0,
                 "std_coverage": 0.0,
+                "mean_src_selected_pct": 0.0,
+                "mean_tgt_selected_pct": 0.0,
             }
             self._coverage_cache = summary
             return dict(summary)
 
         per_sample_coverage = []
+        per_sample_src_selected_pct = []
+        per_sample_tgt_selected_pct = []
         total_sampled_sources = 0
         total_true_in_knn = 0
         total_true_after_force = 0
         for idx in range(len(self.files)):
             stats = self.true_pair_coverage_for_index(idx)
             per_sample_coverage.append(stats["coverage"])
+            per_sample_src_selected_pct.append(stats["src_selected_pct"])
+            per_sample_tgt_selected_pct.append(stats["tgt_selected_pct"])
             total_sampled_sources += stats["num_sampled_sources"]
             total_true_in_knn += stats["num_true_in_knn"]
             if self.force_add_true_pairs:
@@ -235,6 +315,8 @@ class FullAlignmentDataset(Dataset):
             "overall_coverage": float(overall_coverage),
             "mean_coverage": float(np.mean(per_sample_coverage)),
             "std_coverage": float(np.std(per_sample_coverage)),
+            "mean_src_selected_pct": float(np.mean(per_sample_src_selected_pct)),
+            "mean_tgt_selected_pct": float(np.mean(per_sample_tgt_selected_pct)),
         }
         self._coverage_cache = summary
         return dict(summary)
