@@ -170,6 +170,7 @@ class FullAlignmentDataset(Dataset):
         self.k = int(k)
         self.force_add_true_pairs = bool(force_add_true_pairs)
         self.max_corr = int(max_corr) if max_corr is not None else 0
+        self._knn_cache = {}
         self._coverage_cache = None
         if self.max_corr > 0:
             self.files = self._filter_max_corr(self.files, self.max_corr)
@@ -212,6 +213,13 @@ class FullAlignmentDataset(Dataset):
         true_in_knn = (knn_tgt == corres[src_idx][:, None]).any(axis=1)
         return src_idx, knn_tgt, true_in_knn
 
+    def _get_knn_membership(self, idx, corres, feat0, feat1):
+        if idx in self._knn_cache:
+            return self._knn_cache[idx]
+        result = self._compute_knn_membership(idx, corres, feat0, feat1)
+        self._knn_cache[idx] = result
+        return result
+
     def true_pair_coverage_for_index(self, idx):
         path = self.files[idx]
         data = np.load(path)
@@ -229,7 +237,7 @@ class FullAlignmentDataset(Dataset):
         if corres.max() >= xyz1.shape[0]:
             raise ValueError(f"corres index out of range in {path}")
 
-        src_idx, knn_tgt, true_in_knn = self._compute_knn_membership(idx, corres, feat0, feat1)
+        src_idx, knn_tgt, true_in_knn = self._get_knn_membership(idx, corres, feat0, feat1)
         num_sampled_sources = int(src_idx.shape[0])
         num_true_in_knn = int(true_in_knn.sum())
         coverage = float(num_true_in_knn / num_sampled_sources) if num_sampled_sources > 0 else 0.0
@@ -238,6 +246,11 @@ class FullAlignmentDataset(Dataset):
         k_eff = knn_tgt.shape[1]
         src_rep = np.repeat(src_idx, k_eff)
         tgt_flat = knn_tgt.reshape(-1).astype(np.int64, copy=False)
+        if k_eff != self.k:
+            print(
+                f"Warning: effective k ({k_eff}) != configured k ({self.k}) "
+                f"for {path} (feat1 has {feat1.shape[0]} points)"
+            )
         if self.force_add_true_pairs:
             gt_tgt = corres[src_idx]
             missing_true = ~true_in_knn
@@ -256,6 +269,13 @@ class FullAlignmentDataset(Dataset):
                     tgt_flat = np.delete(tgt_flat, drop_idx)
 
         num_pairs = int(tgt_flat.shape[0])
+        expected_pairs = int(num_sampled_sources * k_eff)
+        if num_pairs != expected_pairs:
+            print(
+                f"Warning: pair count mismatch for {path}: "
+                f"expected {expected_pairs} (num_sampled_sources={num_sampled_sources}, k_eff={k_eff}) "
+                f"but got {num_pairs} after force_add_true_pairs"
+            )
         src_selected_pct = float(num_sampled_sources / xyz0.shape[0]) if xyz0.shape[0] > 0 else 0.0
         tgt_selected_unique = int(np.unique(tgt_flat).shape[0]) if tgt_flat.size > 0 else 0
         tgt_selected_pct = float(tgt_selected_unique / xyz1.shape[0]) if xyz1.shape[0] > 0 else 0.0
@@ -348,11 +368,16 @@ class FullAlignmentDataset(Dataset):
             raise ValueError(f"corres size mismatch in {path}")
         if corres.max() >= xyz1.shape[0]:
             raise ValueError(f"corres index out of range in {path}")
-        src_idx, knn_tgt, true_in_knn = self._compute_knn_membership(idx, corres, feat0, feat1)
+        src_idx, knn_tgt, true_in_knn = self._get_knn_membership(idx, corres, feat0, feat1)
         k_eff = knn_tgt.shape[1]
 
         src_rep = np.repeat(src_idx, k_eff)
         tgt_flat = knn_tgt.reshape(-1).astype(np.int64, copy=False)
+        if k_eff != self.k:
+            print(
+                f"Warning: effective k ({k_eff}) != configured k ({self.k}) "
+                f"for {path} (feat1 has {feat1.shape[0]} points)"
+            )
 
         if self.force_add_true_pairs:
             gt_tgt = corres[src_idx]
@@ -362,7 +387,21 @@ class FullAlignmentDataset(Dataset):
                 add_tgt = gt_tgt[missing_true]
                 src_rep = np.concatenate([src_rep, add_src])
                 tgt_flat = np.concatenate([tgt_flat, add_tgt])
+                for src_val in add_src:
+                    idxs = np.flatnonzero(src_rep == src_val)
+                    if idxs.size <= 1:
+                        continue
+                    drop_idx = int(idxs[0])
+                    src_rep = np.delete(src_rep, drop_idx)
+                    tgt_flat = np.delete(tgt_flat, drop_idx)
 
+        expected_pairs = int(src_idx.shape[0] * k_eff)
+        if int(tgt_flat.shape[0]) != expected_pairs:
+            print(
+                f"Warning: pair count mismatch for {path}: "
+                f"expected {expected_pairs} (num_sampled_sources={src_idx.shape[0]}, k_eff={k_eff}) "
+                f"but got {tgt_flat.shape[0]} after force_add_true_pairs"
+            )
         gt_labels = (tgt_flat == corres[src_rep]).astype(np.float32)
 
         src_keypts = xyz0[src_rep]
