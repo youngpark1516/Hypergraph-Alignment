@@ -10,10 +10,10 @@ use_features: true
 feature_dim: 33
 neg_ratio: 2.0
 seed_ratio: 0.2
-num_node: 1024
+num_node: 512
 max_corr: 10000
 batch_size: 1
 num_workers: 12
 skip_gt_trans: true
-pooling_layer_idx: []
+pooling_layer_idx: [0, 1]
 aggregation: wasserstein

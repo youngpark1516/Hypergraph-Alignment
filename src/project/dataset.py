@@ -157,7 +157,7 @@ class FullAlignmentDataset(Dataset):
         feature_dim,
         include_gt_trans,
         seed,
-        k=5,
+        k=10,
         force_add_true_pairs=False,
         max_corr=-1,
     ):
@@ -244,9 +244,18 @@ class FullAlignmentDataset(Dataset):
             if missing_true.any():
                 add_src = src_idx[missing_true]
                 add_tgt = gt_tgt[missing_true]
+                # Replace one existing pair per missing source to keep pair count stable
                 src_rep = np.concatenate([src_rep, add_src])
                 tgt_flat = np.concatenate([tgt_flat, add_tgt])
+                for src_val in add_src:
+                    idxs = np.flatnonzero(src_rep == src_val)
+                    if idxs.size <= 1:
+                        continue
+                    drop_idx = int(idxs[0])
+                    src_rep = np.delete(src_rep, drop_idx)
+                    tgt_flat = np.delete(tgt_flat, drop_idx)
 
+        num_pairs = int(tgt_flat.shape[0])
         src_selected_pct = float(num_sampled_sources / xyz0.shape[0]) if xyz0.shape[0] > 0 else 0.0
         tgt_selected_unique = int(np.unique(tgt_flat).shape[0]) if tgt_flat.size > 0 else 0
         tgt_selected_pct = float(tgt_selected_unique / xyz1.shape[0]) if xyz1.shape[0] > 0 else 0.0
@@ -261,6 +270,7 @@ class FullAlignmentDataset(Dataset):
             "num_true_in_knn": num_true_in_knn,
             "coverage": coverage,
             "coverage_after_force_add": float(coverage_after_force_add),
+            "num_pairs": num_pairs,
             "src_selected_pct": src_selected_pct,
             "tgt_selected_pct": tgt_selected_pct,
         }
@@ -278,6 +288,7 @@ class FullAlignmentDataset(Dataset):
                 "overall_coverage": 0.0,
                 "mean_coverage": 0.0,
                 "std_coverage": 0.0,
+                "mean_num_pairs": 0.0,
                 "mean_src_selected_pct": 0.0,
                 "mean_tgt_selected_pct": 0.0,
             }
@@ -285,6 +296,7 @@ class FullAlignmentDataset(Dataset):
             return dict(summary)
 
         per_sample_coverage = []
+        per_sample_num_pairs = []
         per_sample_src_selected_pct = []
         per_sample_tgt_selected_pct = []
         total_sampled_sources = 0
@@ -293,6 +305,7 @@ class FullAlignmentDataset(Dataset):
         for idx in range(len(self.files)):
             stats = self.true_pair_coverage_for_index(idx)
             per_sample_coverage.append(stats["coverage"])
+            per_sample_num_pairs.append(stats["num_pairs"])
             per_sample_src_selected_pct.append(stats["src_selected_pct"])
             per_sample_tgt_selected_pct.append(stats["tgt_selected_pct"])
             total_sampled_sources += stats["num_sampled_sources"]
@@ -302,19 +315,13 @@ class FullAlignmentDataset(Dataset):
             else:
                 total_true_after_force += stats["num_true_in_knn"]
 
-        overall_coverage = (
-            float(total_true_after_force / total_sampled_sources)
-            if total_sampled_sources > 0
-            else 0.0
-        )
         summary = {
             "num_samples": len(self.files),
             "total_sampled_sources": int(total_sampled_sources),
             "total_true_in_knn": int(total_true_in_knn),
             "total_true_after_force": int(total_true_after_force),
-            "overall_coverage": float(overall_coverage),
             "mean_coverage": float(np.mean(per_sample_coverage)),
-            "std_coverage": float(np.std(per_sample_coverage)),
+            "mean_num_pairs": float(np.mean(per_sample_num_pairs)),
             "mean_src_selected_pct": float(np.mean(per_sample_src_selected_pct)),
             "mean_tgt_selected_pct": float(np.mean(per_sample_tgt_selected_pct)),
         }

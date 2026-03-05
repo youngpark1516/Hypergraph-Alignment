@@ -124,7 +124,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate augmented point cloud pairs with SE(3) or affine transforms.")
     parser.add_argument("--pc-root", type=Path, default=Path("point_clouds"), help="Root directory containing source .npy point clouds")
     parser.add_argument("--out-root", type=Path, default=Path("augmented_point_clouds"), help="Output root for .npz files")
-    parser.add_argument("--translation", type=float, default=10.0, help="Max translation distance magnitude for the random transform")
+    parser.add_argument("--translation", type=float, default=4.0, help="Max translation distance magnitude for the random transform")
     parser.add_argument("--normal-k", type=int, default=10, help="KNN neighbors for normal estimation")
     parser.add_argument("--affine", action="store_true", help="Use affine SPD transform with bounded singular values instead of rigid SE(3)")
     parser.add_argument("--sigma-max", type=float, default=1.2, help="Maximum singular value for affine transform")

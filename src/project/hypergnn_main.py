@@ -107,7 +107,6 @@ def build_dataloaders(args):
 
     if hasattr(val_set, "summarize_true_pair_coverage"):
         val_cov = val_set.summarize_true_pair_coverage()
-        args.val_true_pair_coverage = val_cov["overall_coverage"]
         print("Val true-pair stats:")
         for key in sorted(val_cov.keys()):
             value = val_cov[key]
