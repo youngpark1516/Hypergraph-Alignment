@@ -36,6 +36,7 @@
         <a href="#method">Method</a>
         <a href="#evaluation">Evaluation</a>
         <a href="#results">Results</a>
+        <a href="#limitations">Limitations</a>
         <a href="#links">Links</a>
       </div>
     </nav>
@@ -72,10 +73,9 @@
         <a class="btn btn-outline" target="_blank" rel="noreferrer"
            href="#">Report (PDF)</a>
       </div>
-    </section>
 
     <!-- OVERVIEW -->
-    <section id="overview" class="section">
+    <section id="viewer" class="section">
 
       <div class="mini-viewer">
         <a class="mini-viewer-btn" href="assets/3d_plot/interactive_pc.html" target="_blank" rel="noreferrer">
@@ -88,6 +88,7 @@
         ></iframe>
       </div>
     </section>
+    <section id="overview" class="section">
 
       <h2>Overview</h2>
       <p>
@@ -760,6 +761,29 @@
           <p class="loading-muted">Loading table...</p>
         </div>
       </details>
+    </section>
+
+    <!-- LIMITATIONS -->
+    <section id="limitations" class="section">
+      <h2>Limitations</h2>
+      <ul class="takeaways">
+        <li>
+          <strong>Computational cost:</strong>
+          Wasserstein-based aggregation is more expensive than mean pooling, especially when applied
+          to all layers. Sliced Wasserstein reduces this cost but still adds overhead proportional to
+          the number of projection directions and neighborhood size.
+        </li>
+        <li>
+          <strong>Placement sensitivity:</strong>
+          The best aggregation placement varies across datasets and deformation regimes, meaning
+          that optimal placement may require tuning per setting rather than a single universal choice.
+        </li>
+        <li>
+          <strong>Scope of evaluation:</strong>
+          Experiments are limited to FAUST and PartNet. Generalization to other 3D datasets
+          (e.g., real-world scans with sensor noise or partial overlap) remains to be evaluated.
+        </li>
+      </ul>
     </section>
 
     <!-- LINKS -->
