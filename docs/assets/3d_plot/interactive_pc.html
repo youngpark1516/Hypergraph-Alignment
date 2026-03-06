@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Interactive Point Cloud</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #2a2a2a; overflow: hidden; }
+    #viewer { width: 100%; height: 100%; }
+    .hint {
+      position: absolute; left: 12px; top: 12px;
+      color: #cbd5e1; font: 14px/1.4 system-ui, sans-serif; 
+      background: rgba(0,0,0,0.35); padding: 8px 10px; border-radius: 10px; /* Make it grey 800 */
+    }
+    .back-btn {
+      position: absolute; right: 12px; top: 12px;
+      color: #f8fafc; font: 24px/1 system-ui, sans-serif;
+      text-decoration: none;
+      background: rgba(0,0,0,0.55);
+      padding: 16px 20px; border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.15);
+      display: none;
+    }
+    .back-btn.show { display: inline-flex; }
+    .tabs {
+      position: absolute; left: 12px; top: 56px;
+      display: inline-flex; gap: 6px;
+      background: rgba(0,0,0,0.35);
+      padding: 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .tab-btn {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: #cbd5e1;
+      font: 12px/1 system-ui, sans-serif;
+      padding: 8px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: rgba(255,255,255,0.18);
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body>
+  <div class="hint">Drag = rotate • Scroll = zoom • Right-drag = pan</div>
+  <div class="tabs" role="tablist" aria-label="Point cloud views">
+    <button class="tab-btn active" type="button" data-view="0">Human</button>
+    <button class="tab-btn" type="button" data-view="1">Pliers</button>
+  </div>
+  <a class="back-btn" href="../../index.html#overview">Back</a>
+  <div id="viewer"></div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/controls/OrbitControls.js";
+    import { PLYLoader } from "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/loaders/PLYLoader.js";
+
+    const el = document.getElementById("viewer");
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0b0f14, 3, 15);
+
+    const camera = new THREE.PerspectiveCamera(55, el.clientWidth / el.clientHeight, 0.01, 100);
+    camera.position.set(0, 0.6, 2.5);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(el.clientWidth, el.clientHeight);
+    el.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    const loader = new PLYLoader();
+    const palette = [0xff5aa5, 0x4fa3ff];
+    const views = [
+      {
+        label: "View A",
+        files: [
+          "point_clouds/tr_scan_020.ply",
+          "point_clouds/tr_scan_021.ply"
+        ],
+        pairsUrl: "matching/020_021_segments.json"
+      },
+      {
+        label: "View B",
+        files: [
+          "point_clouds/pc_102073_0.ply",
+          "point_clouds/pc_102073_1.ply"
+        ],
+        pairsUrl: "matching/pc_102073_segments.json"
+      }
+    ];
+    let activeGroup = null;
+
+    function disposeGroup(group) {
+      if (!group) {
+        return;
+      }
+      group.traverse((obj) => {
+        if (obj.geometry) {
+          obj.geometry.dispose();
+        }
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach((mat) => mat.dispose());
+          } else {
+            obj.material.dispose();
+          }
+        }
+      });
+    }
+
+    function loadDataset(dataset) {
+      if (activeGroup) {
+        scene.remove(activeGroup);
+        disposeGroup(activeGroup);
+      }
+
+      const group = new THREE.Group();
+      activeGroup = group;
+      scene.add(group);
+
+      let loaded = 0;
+      let maxSize = 1;
+      const items = [];
+      const centers = [];
+
+      dataset.files.forEach((url, idx) => {
+        loader.load(url, (geom) => {
+          geom.computeBoundingBox();
+          const box = geom.boundingBox;
+          const center = box.getCenter(new THREE.Vector3());
+          geom.center();
+
+          const mat = new THREE.PointsMaterial({
+            size: 0.01,
+            vertexColors: false,
+            color: palette[idx % palette.length],
+            sizeAttenuation: true
+          });
+
+          const points = new THREE.Points(geom, mat);
+          group.add(points);
+
+          const size = box.getSize(new THREE.Vector3()).length();
+          if (size > maxSize) {
+            maxSize = size;
+          }
+          items.push({ points, size });
+          centers.push(center);
+          loaded += 1;
+          if (loaded === dataset.files.length) {
+            const gap = maxSize * 0.05;
+            const offsets = [];
+            let cursor = 0;
+            const total = items.reduce((sum, item) => sum + item.size, 0) + gap * (items.length - 1);
+            cursor = -total / 2;
+            items.forEach((item) => {
+              const half = item.size / 2;
+              cursor += half;
+              offsets.push(cursor);
+              cursor += half + gap;
+            });
+            items.forEach((item, itemIdx) => {
+              item.points.position.x = offsets[itemIdx];
+            });
+            if (dataset.pairsUrl) {
+              loadPairs(dataset.pairsUrl, centers, offsets, group);
+            }
+            controls.target.set(0, 0, 0);
+            camera.position.set(0, maxSize * 0.15, maxSize * 1.2);
+          }
+        });
+      });
+    }
+
+    function loadPairs(pairsUrl, cloudCenters, offsets, group) {
+      fetch(pairsUrl)
+        .then((res) => res.json())
+        .then((data) => {
+          if (!data || !Array.isArray(data.segments)) {
+            return;
+          }
+          const segments = data.segments;
+          const positions = new Float32Array(segments.length * 6);
+          for (let i = 0; i < segments.length; i++) {
+            const s = segments[i];
+            const p0 = new THREE.Vector3(s[0], s[1], s[2])
+              .sub(cloudCenters[0])
+              .add(new THREE.Vector3(offsets[0], 0, 0));
+            const p1 = new THREE.Vector3(s[3], s[4], s[5])
+              .sub(cloudCenters[1])
+              .add(new THREE.Vector3(offsets[1], 0, 0));
+            const base = i * 6;
+            positions[base + 0] = p0.x;
+            positions[base + 1] = p0.y;
+            positions[base + 2] = p0.z;
+            positions[base + 3] = p1.x;
+            positions[base + 4] = p1.y;
+            positions[base + 5] = p1.z;
+          }
+          const geom = new THREE.BufferGeometry();
+          geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+          const mat = new THREE.LineDashedMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.55,
+            dashSize: 0.05,
+            gapSize: 0.03
+          });
+          const lines = new THREE.LineSegments(geom, mat);
+          lines.computeLineDistances();
+          group.add(lines);
+        })
+        .catch(() => {});
+    }
+
+    // A little light helps if you later switch to mesh; points don't need it.
+    const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+    scene.add(ambient);
+
+    function onResize() {
+      const w = el.clientWidth, h = el.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+    window.addEventListener("resize", onResize);
+
+    function animate() {
+      if (activeGroup) {
+        activeGroup.rotation.y += 0.002;
+      }
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    animate();
+
+    const backBtn = document.querySelector(".back-btn");
+    if (window.self === window.top) {
+      backBtn.classList.add("show");
+    }
+
+    const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
+    tabButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = Number(btn.dataset.view);
+        tabButtons.forEach((b) => b.classList.toggle("active", b === btn));
+        loadDataset(views[idx]);
+      });
+    });
+    loadDataset(views[0]);
+  </script>
+</body>
+</html>
