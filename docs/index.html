@@ -653,14 +653,13 @@
         the strongest placements shift under larger deformations.
       </p>
 
-      <ul class="takeaways">
-        <li><strong>Consistent gains:</strong> Best WHNN variant outperforms HyperGCT in every reported regime.</li>
-        <li><strong>Placement matters:</strong> The best Wasserstein insertion point changes with deformation severity.</li>
-        <li><strong>Tradeoffs are visible in diagnostics:</strong> Agg/Disj and loss terms help explain why some placements generalize better than others.</li>
-      </ul>
+      <h3 class="results-subhead">Headline comparison</h3>
+      <p class="results-lead">
+        The summary table below highlights the best-performing Wasserstein placement per dataset/regime
+        against the HyperGCT baseline.
+      </p>
 
-      <!-- Headline summary table -->
-      <div class="table-wrap" style="margin-top:1rem;">
+      <div class="table-wrap results-summary-wrap">
         <table class="results-table summary-table">
           <thead>
             <tr>
@@ -704,12 +703,63 @@
         </table>
       </div>
 
-    <details class="details" style="margin-top:1rem;">
-      <summary>Full ablation table (all metrics)</summary>
-      <div id="ablation-table-slot">
-        <p style="color:#666;">Loading table...</p>
+      <h3 class="results-subhead">Figure-based interpretation</h3>
+      <div class="result-figures">
+        <article class="result-row">
+          <figure class="result-figure">
+            <img src="assets/plots/validation.png"
+                 alt="Precision and F1 by Dataset and Method" />
+            <figcaption>
+              Precision and F1 scores by dataset and method across deformation regimes.
+            </figcaption>
+          </figure>
+          <aside class="result-note card">
+            <h4>What this figure shows</h4>
+            <ul>
+              <li><strong>The F1 gap grows with deformation severity.</strong> On FAUST differences are small (+0.013); by PartNet&nbsp;2.0&times; the gap widens to +0.174.</li>
+              <li><strong>Precision vs. recall asymmetry.</strong> HyperGCT precision drops faster under harder regimes; WHNN keeps precision and F1 closer together.</li>
+              <li><strong>Placement sensitivity increases under large deformations.</strong> All WHNN variants saturate near 0.99 on FAUST, but {0,5} (first&nbsp;+&nbsp;last) pulls clearly ahead on PartNet&nbsp;2.0&times;.</li>
+              <li><strong>Last-layer placement leads on intermediate regimes.</strong> WHNN&nbsp;{4,5} tops PartNet&nbsp;1.5&times; but falls behind at 2.0&times;.</li>
+            </ul>
+          </aside>
+        </article>
+
+        <article class="result-row">
+          <figure class="result-figure result-figure--narrow">
+            <img src="assets/plots/l1_improvement.png"
+                 alt="L1-Error Relative Improvement by Dataset and Method" />
+            <figcaption>
+              L1-error relative improvement, computed as
+              <span class="nowrap">(1 &minus; L1<sub>after</sub> / L1<sub>before</sub>)</span>.
+            </figcaption>
+          </figure>
+          <aside class="result-note card">
+            <h4>Key observations</h4>
+            <ul>
+              <li><strong>Learning-based methods dominate ICP across the board.</strong> HyperGCT baseline (0.914 / 0.867) already far exceeds ICP (0.676 / 0.774).</li>
+              <li><strong>WHNN{0,5} achieves near-perfect L1 reduction on FAUST (0.997).</strong> WHNN{0,1} is close behind at 0.992.</li>
+              <li><strong>Early-layer Wasserstein is the winning strategy here.</strong> The top-two bars on both datasets include an early layer (0 or 1).</li>
+              <li><strong>The WHNN advantage is geometric, not just classificatory.</strong> On PartNet&nbsp;2.0&times;, WHNN{0,5} yields 0.975 vs. 0.867 for HyperGCT: a 10.8 pp improvement in actual alignment quality.</li>
+            </ul>
+          </aside>
+        </article>
       </div>
-    </details>
+
+      <ul class="takeaways">
+        <li><strong>Consistent gains:</strong> Best WHNN variant outperforms HyperGCT in every reported regime.</li>
+        <li><strong>Placement matters:</strong> The best Wasserstein insertion point changes with deformation severity.</li>
+        <li><strong>Tradeoffs are visible in diagnostics:</strong> Agg/Disj and loss terms help explain why some placements generalize better than others.</li>
+      </ul>
+
+      <p class="results-lead">
+        For full per-configuration metrics (including diagnostics and losses), expand the complete ablation table.
+      </p>
+      <details class="details results-details">
+        <summary>Full ablation table (all metrics)</summary>
+        <div id="ablation-table-slot">
+          <p class="loading-muted">Loading table...</p>
+        </div>
+      </details>
     </section>
 
     <!-- LINKS -->
