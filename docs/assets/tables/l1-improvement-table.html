@@ -1,0 +1,226 @@
+<div class="table-wrap">
+    <table class="results-table ablation-table">
+        <thead>
+        <tr>
+            <th class="col-dataset">Dataset</th>
+            <th class="col-model">Model</th>
+            <th class="col-wass">Wass. Agg.</th>
+            <th class="col-metric">L1 (before)</th>
+            <th class="col-metric">L1 (after)</th>
+            <th class="col-metric">Improvement</th>
+        </tr>
+        </thead>
+        <tbody>
+
+        <!-- FAUST -->
+        <tr class="group-start">
+            <td class="col-dataset" rowspan="7"><strong>FAUST</strong></td>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">All layers</td>
+            <td class="col-metric">0.181</td>
+            <td class="col-metric"><strong>4.1&times;10<sup>-5</sup></strong></td>
+            <td class="col-metric"><strong>1.000</strong></td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First 2 layers</td>
+            <td class="col-metric">0.180</td>
+            <td class="col-metric">0.001</td>
+            <td class="col-metric">0.992</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">Last 2 layers</td>
+            <td class="col-metric">0.180</td>
+            <td class="col-metric">0.016</td>
+            <td class="col-metric">0.910</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First + Last</td>
+            <td class="col-metric">0.180</td>
+            <td class="col-metric">5.7&times;10<sup>-4</sup></td>
+            <td class="col-metric">0.997</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First layer</td>
+            <td class="col-metric">0.180</td>
+            <td class="col-metric">0.002</td>
+            <td class="col-metric">0.990</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">Last layer</td>
+            <td class="col-metric">0.180</td>
+            <td class="col-metric">0.001</td>
+            <td class="col-metric">0.994</td>
+        </tr>
+        <tr>
+            <td class="col-model">HyperGCT</td>
+            <td class="col-wass">N/A</td>
+            <td class="col-metric">0.180</td>
+            <td class="col-metric">0.016</td>
+            <td class="col-metric">0.914</td>
+        </tr>
+
+        <!-- PartNet rigid -->
+        <tr class="group-start">
+            <td class="col-dataset" rowspan="7"><strong>PartNet (rigid)</strong></td>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">All layers</td>
+            <td class="col-metric">0.237</td>
+            <td class="col-metric">0.009</td>
+            <td class="col-metric">0.962</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First 2 layers</td>
+            <td class="col-metric">0.237</td>
+            <td class="col-metric">0.001</td>
+            <td class="col-metric">0.995</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">Last 2 layers</td>
+            <td class="col-metric">0.237</td>
+            <td class="col-metric">6.3&times;10<sup>-4</sup></td>
+            <td class="col-metric">0.997</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First + Last</td>
+            <td class="col-metric">0.237</td>
+            <td class="col-metric"><strong>3.8&times;10<sup>-4</sup></strong></td>
+            <td class="col-metric"><strong>0.998</strong></td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First layer</td>
+            <td class="col-metric">0.237</td>
+            <td class="col-metric">0.002</td>
+            <td class="col-metric">0.993</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">Last layer</td>
+            <td class="col-metric">0.237</td>
+            <td class="col-metric">8.1&times;10<sup>-4</sup></td>
+            <td class="col-metric">0.997</td>
+        </tr>
+        <tr>
+            <td class="col-model">HyperGCT</td>
+            <td class="col-wass">N/A</td>
+            <td class="col-metric">0.237</td>
+            <td class="col-metric">0.002</td>
+            <td class="col-metric">0.992</td>
+        </tr>
+        
+        <!-- PartNet 1.5x -->
+        <tr class="group-start">
+            <td class="col-dataset" rowspan="7"><strong>PartNet (1.5&times;)</strong></td>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">All layers</td>
+            <td class="col-metric">0.248</td>
+            <td class="col-metric">0.004</td>
+            <td class="col-metric">0.983</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First 2 layers</td>
+            <td class="col-metric">0.248</td>
+            <td class="col-metric"><strong>0.003</strong></td>
+            <td class="col-metric"><strong>0.989</strong></td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">Last 2 layers</td>
+            <td class="col-metric">0.248</td>
+            <td class="col-metric">0.005</td>
+            <td class="col-metric">0.980</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First + Last</td>
+            <td class="col-metric">0.248</td>
+            <td class="col-metric">0.004</td>
+            <td class="col-metric">0.984</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First layer</td>
+            <td class="col-metric">0.248</td>
+            <td class="col-metric">0.007</td>
+            <td class="col-metric">0.973</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">Last layer</td>
+            <td class="col-metric">0.248</td>
+            <td class="col-metric">0.005</td>
+            <td class="col-metric">0.980</td>
+        </tr>
+        <tr>
+            <td class="col-model">HyperGCT</td>
+            <td class="col-wass">N/A</td>
+            <td class="col-metric">0.248</td>
+            <td class="col-metric">0.010</td>
+            <td class="col-metric">0.958</td>
+        </tr>
+
+        <!-- PartNet 2.0x -->
+        <tr class="group-start">
+            <td class="col-dataset" rowspan="7"><strong>PartNet (2.0&times;)</strong></td>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">All layers</td>
+            <td class="col-metric">0.261</td>
+            <td class="col-metric">0.018</td>
+            <td class="col-metric">0.930</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First 2 layers</td>
+            <td class="col-metric">0.261</td>
+            <td class="col-metric">0.010</td>
+            <td class="col-metric">0.960</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">Last 2 layers</td>
+            <td class="col-metric">0.261</td>
+            <td class="col-metric">0.013</td>
+            <td class="col-metric">0.951</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First + Last</td>
+            <td class="col-metric">0.261</td>
+            <td class="col-metric">0.006</td>
+            <td class="col-metric"><strong>0.975</strong></td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">First layer</td>
+            <td class="col-metric">0.261</td>
+            <td class="col-metric">0.015</td>
+            <td class="col-metric">0.943</td>
+        </tr>
+        <tr>
+            <td class="col-model">WHNN</td>
+            <td class="col-wass">Last layer</td>
+            <td class="col-metric">0.261</td>
+            <td class="col-metric">0.012</td>
+            <td class="col-metric">0.954</td>
+        </tr>
+        <tr>
+            <td class="col-model">HyperGCT</td>
+            <td class="col-wass">N/A</td>
+            <td class="col-metric">0.261</td>
+            <td class="col-metric">0.035</td>
+            <td class="col-metric">0.867</td>
+        </tr>
+
+
+        </tbody>
+    </table>
+</div>
