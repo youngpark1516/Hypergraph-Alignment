@@ -362,7 +362,7 @@ class Trainer(object):
                 import pdb
                 pdb.set_trace()
 
-            if (iter + 1) % 100 == 0 and self.verbose:
+            if ((iter + 1) % 100 == 0 or iter == num_iter - 1) and self.verbose:
                 curr_iter = num_iter * (epoch - 1) + iter
                 for key in meter_list:
                     self.writer.add_scalar(f"Train/{key}", meter_dict[key].avg, curr_iter)
@@ -457,8 +457,8 @@ class Trainer(object):
                             res["seeds"].squeeze(0),
                             knn_idx.squeeze(0),
                             num_iterations=self.model.num_iterations,
-                            max_ratio=0.4,
-                            max_ratio_seeds=0.4,
+                            max_ratio=0.2,
+                            max_ratio_seeds=0.8,
                             min_score=self.generation_min_score,
                         )
                     elif self.generation_method == "spectral":
@@ -476,7 +476,7 @@ class Trainer(object):
                             max_ratio=0.4,
                             src_idx=src_indices.squeeze(0) if src_indices is not None else None,
                             tgt_idx=tgt_indices.squeeze(0) if tgt_indices is not None else None,
-                            topk_each_iter=8,
+                            topk_each_iter=4,
                             min_confidence=self.generation_min_confidence,
                         )
                     else:

@@ -95,9 +95,9 @@ misc_arg.add_argument('--eval_num', type=int, default=0,
 misc_arg.add_argument('--eval_seed', type=int, default=0,
                       help='random seed for eval_num file sampling')
 misc_arg.add_argument('--generation_method', type=str, default='spectral-2', choices=['spectral-2', 'spectral', 'greedy'])
-misc_arg.add_argument('--generation_min_score', type=float, default=None,
+misc_arg.add_argument('--generation_min_score', type=float, default=0.4,
                       help='absolute minimum spectral score for spectral generation methods')
-misc_arg.add_argument('--generation_min_confidence', type=float, default=None,
+misc_arg.add_argument('--generation_min_confidence', type=float, default=0.9,
                       help='absolute minimum node confidence for greedy generation method')
 misc_arg.add_argument('--use_wandb', action='store_true')
 misc_arg.add_argument('--wandb_project', type=str, default='3d-alignment')

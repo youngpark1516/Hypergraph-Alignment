@@ -63,7 +63,7 @@ def cal_leading_eigenvector(M, num_iterations, method='power'):
         leading_eig = leading_eig.squeeze(-1)
         return leading_eig
     if method == 'eig':  # cause NaN during back-prop
-        e, v = torch.symeig(M, eigenvectors=True)
+        e, v = torch.linalg.eigh(M)
         leading_eig = v[:, :, -1]
         return leading_eig
     exit(-1)
@@ -107,6 +107,7 @@ def spectral_matching_greedy(
         raise ValueError("src_idx/tgt_idx must have length num_corr")
 
     scores = cal_leading_eigenvector(M.unsqueeze(0), num_iterations, method=method).squeeze(0)  # [num_corr]
+    scores = scores / (scores.max() + 1e-6)
     max_possible = min(int(torch.unique(src_idx).numel()), int(torch.unique(tgt_idx).numel()))
     if max_ratio is None:
         max_num = max_possible
@@ -300,6 +301,9 @@ def greedy_compatibility_expansion(
         max_num = min(max_num, num_corr)
     if max_num <= 0:
         raise ValueError("max_ratio must be > 0 to select any nodes")
+    
+    # Normalize confidence with sigmoid
+    confidence = torch.sigmoid(confidence)
 
     confidence_allowed = torch.ones(num_corr, dtype=torch.bool, device=M.device)
     if min_confidence is not None:
