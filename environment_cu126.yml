@@ -35,5 +35,6 @@ dependencies:
       - torch_geometric==2.7.0
       - wandb==0.24.0
       - scikit-learn
+      - open-3d
       - tensorboardX
       - rich
