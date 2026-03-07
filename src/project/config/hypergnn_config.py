@@ -90,6 +90,8 @@ misc_arg.add_argument('--force_all_labels', type=str2bool, default=False)
 misc_arg.add_argument('--skip_gt_trans', type=str2bool, default=True)
 misc_arg.add_argument('--split_seed', type=int, default=0)
 misc_arg.add_argument('--eval_snapshot', type=str, default='', help='run evaluation-only with this snapshot')
+misc_arg.add_argument('--eval_out', type=str, default='',
+                      help='path for the eval results CSV (default: auto-named under results/)')
 misc_arg.add_argument('--eval_num', type=int, default=0,
                       help='cap number of validation files evaluated; 0 uses all')
 misc_arg.add_argument('--eval_seed', type=int, default=0,

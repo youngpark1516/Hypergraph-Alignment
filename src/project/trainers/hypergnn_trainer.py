@@ -624,6 +624,19 @@ class Trainer(object):
             'reg_recall': meter_dict['reg_recall'].avg,
             'graph_loss': meter_dict['graph_loss'].avg,
             'f1': meter_dict['f1'].avg,
+            'precision': meter_dict['precision'].avg,
+            'recall': meter_dict['recall'].avg,
+            're': meter_dict['re'].avg,
+            'te': meter_dict['te'].avg,
+            'disjointness': meter_dict['disjointness'].avg,
+            'edge_distance_var': meter_dict['edge_distance_var'].avg,
+            'aggregatedness': meter_dict['aggregatedness'].avg,
+            'init_abs_err': initial_abs_err_meter.avg if initial_abs_err_meter.count > 0 else float('nan'),
+            'init_l2_err': initial_l2_err_meter.avg if initial_l2_err_meter.count > 0 else float('nan'),
+            'selected_abs_err': selected_abs_err_meter.avg if selected_abs_err_meter.count > 0 else float('nan'),
+            'selected_l2_err': selected_l2_err_meter.avg if selected_l2_err_meter.count > 0 else float('nan'),
+            'n_eval': initial_abs_err_meter.count,
+            'n_selected': selected_abs_err_meter.count,
         }
         for key in meter_list:
             self.writer.add_scalar(f"Val/{key}", meter_dict[key].avg, epoch)

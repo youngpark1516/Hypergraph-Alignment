@@ -1,3 +1,4 @@
+import csv
 import os
 import sys
 from pathlib import Path
@@ -153,6 +154,67 @@ def build_scheduler(args, optimizer):
     raise ValueError(f"Unsupported scheduler: {args.scheduler}")
 
 
+def run_eval_from_args(args) -> dict:
+    """Run a single eval pass given a fully-constructed args namespace.
+
+    Calling code is responsible for setting all required fields.
+    Returns the full metrics dict from trainer.evaluate().
+    """
+    args.generate = True
+    args.mode = "test"
+    args.pretrain = args.eval_snapshot
+    args.batch_size = 1
+
+    # Parse pooling_layer_idx if it came in as a string
+    if isinstance(args.pooling_layer_idx, str):
+        text = args.pooling_layer_idx.strip()
+        args.pooling_layer_idx = (
+            [int(v.strip()) for v in text.split(",") if v.strip()]
+            if text else []
+        )
+    elif isinstance(args.pooling_layer_idx, (int, float)):
+        args.pooling_layer_idx = [int(args.pooling_layer_idx)]
+
+    _, val_loader = build_dataloaders(args)
+
+    model = build_model(args)
+    optimizer = build_optimizer(args, model)
+    scheduler = build_scheduler(args, optimizer)
+
+    evaluate_metric = {
+        "ClassificationLoss": ClassificationLoss(balanced=args.balanced),
+        "SpectralMatchingLoss": SpectralMatchingLoss(balanced=args.balanced),
+        "HypergraphLoss": EdgeLoss(),
+        "TransformationLoss": TransformationLoss(args.re_thre, args.te_thre),
+    }
+    metric_weight = {
+        "ClassificationLoss": args.weight_classification,
+        "SpectralMatchingLoss": args.weight_spectralmatching,
+        "HypergraphLoss": args.weight_hypergraph,
+        "TransformationLoss": args.weight_transformation,
+    }
+
+    args.model = model
+    args.optimizer = optimizer
+    args.scheduler = scheduler
+    args.evaluate_metric = evaluate_metric
+    args.metric_weight = metric_weight
+    args.train_loader = None
+    args.val_loader = val_loader
+
+    trainer = Trainer(args)
+    res = trainer.evaluate(epoch=0)
+
+    # Clean up GPU memory and TensorBoard writer so repeated calls don't accumulate resources
+    trainer.writer.close()
+    del trainer.model
+    del trainer
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return res
+
+
 def main():
     args = get_config()
     args.generate = bool(args.eval_snapshot)
@@ -200,6 +262,29 @@ def main():
             f'Evaluation: SM Loss {res["sm_loss"]:.2f} Class Loss {res["class_loss"]:.2f} '
             f'Graph Loss {res["graph_loss"]:.2f} F1 {res["f1"]:.2f} Recall {res["reg_recall"]:.2f}'
         )
+
+        # --- save results to CSV ---
+        snapshot_stem = Path(args.eval_snapshot).stem
+        default_csv = f"results/{snapshot_stem}_{args.dataset}_eval.csv"
+        out_csv = args.eval_out or default_csv
+        os.makedirs(os.path.dirname(os.path.abspath(out_csv)), exist_ok=True)
+
+        row = {
+            "snapshot": args.eval_snapshot,
+            "dataset": args.dataset,
+            "root": args.root,
+            "split_seed": args.split_seed,
+            "eval_num": args.eval_num,
+            "generation_method": args.generation_method,
+            **{k: v for k, v in res.items()},
+        }
+        write_header = not os.path.exists(out_csv)
+        with open(out_csv, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(row.keys()), extrasaction="ignore")
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
+        print(f"Eval results saved to {out_csv}")
         return
     trainer.train(resume=False, start_epoch=0, best_reg_recall=0.0, best_F1=0.0)
 
