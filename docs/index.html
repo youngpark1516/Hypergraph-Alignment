@@ -71,8 +71,11 @@
         <a class="btn" target="_blank" rel="noreferrer"
            href="https://github.com/youngpark1516/Hypergraph-Alignment">Code</a>
         <a class="btn btn-outline" target="_blank" rel="noreferrer"
-           href="#">Report (PDF)</a>
+           href="assets/report.pdf">Report (PDF)</a>
+        <a class="btn btn-outline" target="_blank" rel="noreferrer"
+           href="assets/poster.pdf">Poster (PDF)</a>
       </div>
+    </section>
 
     <!-- OVERVIEW -->
     <section id="viewer" class="section">
@@ -107,19 +110,21 @@
       <ul class="takeaways">
         <li>
           <strong>Wasserstein aggregation in hypergraph layers:</strong>
-          Replace mean pooling with optimal-transport-inspired aggregation to better preserve
-          multi-modal neighborhood structure.
+          We replace mean pooling in HyperGCT with a sliced-Wasserstein aggregation operator
+          that treats neighborhood features as empirical distributions rather than simple averages.
         </li>
         <li>
           <strong>Placement study:</strong>
-          Compare where this aggregation is most effective (early vs. late vs. multiple layers).
+          We compare several layer-placement strategies and show that the best placement depends
+          on the dataset and deformation regime.
         </li>
         <li>
-          <strong>Alternative hypothesis generation:</strong>
-          Implement a matching-based hypothesis generation step as an alternative to ICP for
-          piecewise-rigid alignment settings.
+          <strong>Piecewise-rigid post-processing change:</strong>
+          For the piecewise-rigid setting, we replace HyperGCT’s original post-processing stage
+          with a matching-based hypothesis-generation alternative.
         </li>
       </ul>
+    </section>
 
     <!-- PROBLEM SETUP -->
     <section id="problem" class="section">
@@ -525,9 +530,9 @@
         <div class="card">
           <h3>Data</h3>
           <ul>
-            <li><strong>Datasets:</strong> FAUST, PartNet.</li>
-            <li><strong>Settings:</strong> rigid, non-rigid, affine / piecewise-rigid regimes.</li>
-            <li><strong>Perturbations:</strong> deformation/noise level controlled by \( \sigma \) (e.g., \( \sigma = 0 \); ranges such as \( \sigma \in [0,1.5] \), \( \sigma \in [0,2] \)).</li>
+            <li><strong>Datasets:</strong> FAUST and PartNet.</li>
+            <li><strong>Settings:</strong> FAUST non-rigid alignment, plus PartNet rigid and perturbed piecewise-rigid settings.</li>
+            <li><strong>Perturbations:</strong> PartNet is evaluated across increasing perturbation levels, including rigid, 1.5×, and 2.0× regimes.</li>
           </ul>
         </div>
 
@@ -564,6 +569,12 @@
             <li><strong>In-edge distance consistency:</strong> variance of point distances among pairs within the same hyperedge.</li>
           </ul>
         </div>
+
+        <p>
+          These structural diagnostics are useful for interpreting representation quality, but they
+          are not complete proxies for end-task performance: the configuration with the best
+          diagnostic values is not always the one with the best final alignment result.
+        </p>
       </div>
 
       <details class="details">
@@ -648,16 +659,18 @@
       <h2>Results &amp; takeaways</h2>
 
       <p>
-        WHNN improves F1 over the HyperGCT mean-pooling baseline across all reported settings,
-        but the best Wasserstein aggregation placement depends on dataset and perturbation regime.
-        On FAUST, applying Wasserstein aggregation across all layers performs best, while on PartNet
-        the strongest placements shift under larger deformations.
+        Across all evaluated regimes, at least one Wasserstein configuration improves over the
+        learned HyperGCT mean-pooling baseline. The best placement, however, depends on the dataset
+        and deformation setting: on FAUST, all-layer aggregation performs best, while on PartNet
+        the strongest learned configuration changes across rigid and perturbed regimes. In the
+        easiest rigid PartNet setting, ICP remains nearly perfect even though Wasserstein-based
+        variants strengthen the learned model.
       </p>
 
       <h3 class="results-subhead">Headline comparison</h3>
       <p class="results-lead">
-        The summary table below highlights the best-performing Wasserstein placement per dataset/regime
-        against the HyperGCT baseline.
+        The summary table below highlights the strongest Wasserstein placement(s) per dataset/regime
+against the HyperGCT baseline.
       </p>
 
       <div class="table-wrap results-summary-wrap">
@@ -680,8 +693,8 @@
               <td><strong>+0.013</strong></td>
             </tr>
             <tr>
-              <td>PartNet (0.0&times;)</td>
-              <td>Last 2 layers</td>
+              <td>PartNet (rigid)</td>
+              <td>Last 2 layers / First + Last</td>
               <td>0.917</td>
               <td><strong>0.993</strong></td>
               <td><strong>+0.076</strong></td>
@@ -716,12 +729,12 @@
           </figure>
           <aside class="result-note card">
             <h4>What this figure shows</h4>
-            <ul>
-              <li><strong>The F1 gap grows with deformation severity.</strong> On FAUST differences are small (+0.013); by PartNet&nbsp;2.0&times; the gap widens to +0.174.</li>
-              <li><strong>Precision vs. recall asymmetry.</strong> HyperGCT precision drops faster under harder regimes; WHNN keeps precision and F1 closer together.</li>
-              <li><strong>Placement sensitivity increases under large deformations.</strong> All WHNN variants saturate near 0.99 on FAUST, but {0,5} (first&nbsp;+&nbsp;last) pulls clearly ahead on PartNet&nbsp;2.0&times;.</li>
-              <li><strong>Last-layer placement leads on intermediate regimes.</strong> WHNN&nbsp;{4,5} tops PartNet&nbsp;1.5&times; but falls behind at 2.0&times;.</li>
-            </ul>
+              <ul>
+                <li><strong>At least one Wasserstein variant improves over HyperGCT in every regime.</strong> The gain is modest on FAUST and larger under stronger PartNet perturbations.</li>
+                <li><strong>The best placement is regime-dependent.</strong> All-layer aggregation is strongest on FAUST, while the best PartNet configuration shifts across rigid, 1.5×, and 2.0× settings.</li>
+                <li><strong>Rigid PartNet is a special case.</strong> The strongest learned variants are Last 2 layers and First + Last, but ICP remains nearly perfect in the easiest rigid regime.</li>
+                <li><strong>The main pattern is architectural sensitivity.</strong> The results support the idea that Wasserstein aggregation helps, but where it is inserted matters substantially.</li>
+              </ul>
           </aside>
         </article>
 
@@ -736,21 +749,30 @@
           </figure>
           <aside class="result-note card">
             <h4>Key observations</h4>
-            <ul>
-              <li><strong>Learning-based methods dominate ICP across the board.</strong> HyperGCT baseline (0.914 / 0.867) already far exceeds ICP (0.676 / 0.774).</li>
-              <li><strong>WHNN{0,5} achieves near-perfect L1 reduction on FAUST (0.997).</strong> WHNN{0,1} is close behind at 0.992.</li>
-              <li><strong>Early-layer Wasserstein is the winning strategy here.</strong> The top-two bars on both datasets include an early layer (0 or 1).</li>
-              <li><strong>The WHNN advantage is geometric, not just classificatory.</strong> On PartNet&nbsp;2.0&times;, WHNN{0,5} yields 0.975 vs. 0.867 for HyperGCT: a 10.8 pp improvement in actual alignment quality.</li>
-            </ul>
+              <ul>
+                <li><strong>Wasserstein improves alignment quality over HyperGCT.</strong> In every evaluated regime, at least one WHNN configuration achieves better L1 improvement than the mean-pooling learned baseline.</li>
+                <li><strong>ICP is still strongest in the easiest rigid case.</strong> The learned models become more competitive and more clearly advantageous as the perturbation regime becomes harder.</li>
+                <li><strong>Placement effects differ between metrics and regimes.</strong> On PartNet 1.5×, Last 2 layers gives the best F1, while First 2 layers gives the best alignment improvement.</li>
+                <li><strong>The benefit is downstream, not only classificatory.</strong> Stronger Wasserstein placements improve final matching quality as well as pair-level correspondence metrics.</li>
+              </ul>
           </aside>
         </article>
       </div>
 
       <ul class="takeaways">
-        <li><strong>Consistent gains:</strong> Best WHNN variant outperforms HyperGCT in every reported regime.</li>
-        <li><strong>Placement matters:</strong> The best Wasserstein insertion point changes with deformation severity.</li>
-        <li><strong>Tradeoffs are visible in diagnostics:</strong> Agg/Disj and loss terms help explain why some placements generalize better than others.</li>
+        <li><strong>Consistent improvement over the learned baseline:</strong> In every evaluated regime, at least one Wasserstein configuration outperforms mean-pooling HyperGCT.</li>
+        <li><strong>Placement is an architectural choice:</strong> The best insertion pattern changes across FAUST and PartNet regimes rather than staying fixed across settings.</li>
+        <li><strong>Diagnostics are useful but incomplete:</strong> Structural metrics help explain representation changes, but they are not perfect proxies for final alignment quality.</li>
       </ul>
+
+      <p>
+        A central pattern in the report is that Wasserstein aggregation does not help in exactly
+        the same way at every depth. On FAUST, applying it throughout the network works best,
+        suggesting that preserving distributional structure across the full feature hierarchy is
+        helpful under smooth non-rigid deformation. On PartNet, the best configuration changes
+        with perturbation strength, indicating that early and late aggregation play different roles
+        as the registration problem becomes harder.
+      </p>
 
       <p class="results-lead">
         For full per-configuration metrics (including diagnostics and losses), expand the complete ablation table.
@@ -766,33 +788,39 @@
     <!-- LIMITATIONS -->
     <section id="limitations" class="section">
       <h2>Limitations</h2>
-      <ul class="takeaways">
-        <li>
-          <strong>Computational cost:</strong>
-          Wasserstein-based aggregation is more expensive than mean pooling, especially when applied
-          to all layers. Sliced Wasserstein reduces this cost but still adds overhead proportional to
-          the number of projection directions and neighborhood size.
-        </li>
-        <li>
-          <strong>Placement sensitivity:</strong>
-          The best aggregation placement varies across datasets and deformation regimes, meaning
-          that optimal placement may require tuning per setting rather than a single universal choice.
-        </li>
-        <li>
-          <strong>Scope of evaluation:</strong>
-          Experiments are limited to FAUST and PartNet. Generalization to other 3D datasets
-          (e.g., real-world scans with sensor noise or partial overlap) remains to be evaluated.
-        </li>
-      </ul>
+        <ul class="takeaways">
+          <li>
+            <strong>Limited placement search:</strong>
+            We evaluate only a small set of layer-placement strategies, so the results show that
+            placement matters rather than fully mapping the design space.
+          </li>
+          <li>
+            <strong>Unquantified efficiency cost:</strong>
+            Wasserstein-based aggregation is more expensive than mean pooling, but this report does
+            not measure the added runtime or memory overhead directly.
+          </li>
+          <li>
+            <strong>Limited empirical scope:</strong>
+            Evaluation is restricted to FAUST and several PartNet regimes, so the conclusions remain
+            promising but limited relative to broader real-world registration settings.
+          </li>
+          <li>
+            <strong>Diagnostics do not fully explain outcomes:</strong>
+            Structural metrics help interpret the learned representations, but they do not completely
+            explain why one configuration gives the best final alignment.
+          </li>
+        </ul>
     </section>
 
     <!-- LINKS -->
     <section id="links" class="section">
       <h2>Links</h2>
-      <ul class="link-list">
-        <li><a target="_blank" rel="noreferrer" href="https://github.com/youngpark1516/Hypergraph-Alignment">Code repository</a></li>
-        <li><a target="_blank" rel="noreferrer" href="">Report (PDF)</a></li>
-      </ul>
+      <a class="btn" target="_blank" rel="noreferrer"
+           href="https://github.com/youngpark1516/Hypergraph-Alignment">Code</a>
+      <a class="btn btn-outline" target="_blank" rel="noreferrer"
+          href="assets/report.pdf">Report (PDF)</a>
+      <a class="btn btn-outline" target="_blank" rel="noreferrer"
+          href="assets/poster.pdf">Poster (PDF)</a>
     </section>
 
     <footer class="footer">
