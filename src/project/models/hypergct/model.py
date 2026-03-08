@@ -188,8 +188,6 @@ class feature_aggregation_layer(nn.Module):
 
     def forward(self, vertex_feat, edge_feat, edge_weight, incidence, inv_edge_degree, inv_vertex_degree, 
                 edge_scale, knn_k):
-        # Renames: x->vertex_feat, y->edge_feat, W->edge_weight, H->incidence,
-        # De_n_1->inv_edge_degree, Dv_n_1->inv_vertex_degree, W_edge->edge_scale, k->knn_k
         batch_size, num_channels, num_nodes = vertex_feat.size()
         edge_feat_out = None
         if self.use_knn:
@@ -329,7 +327,7 @@ class HGNN(nn.Module):
         D = torch.diag_embed(degree)  # torch.sparse_matrix
         inv_edge_degree = D ** -1
         inv_edge_degree[torch.isinf(inv_edge_degree)] = 0
-        inv_vertex_degree = inv_edge_degree  # The initial incidence matrix is symmetric
+        inv_vertex_degree = inv_edge_degree
 
         # 3. edge weight = sum(W, dim=0)
         edge_scale = edge_weight.sum(dim=1)  # [bs, num]
@@ -410,11 +408,11 @@ class HyperGCT(nn.Module):
             sorted_value, _ = torch.topk(FCG, FCG_K, dim=2, largest=True, sorted=False)
             sorted_value = sorted_value.reshape(bs, -1)
             thresh = sorted_value.mean(dim=1, keepdim=True).unsqueeze(2)
-            del sorted_value  # Free memory
+            del sorted_value
 
             # Apply threshold
             FCG = torch.where(FCG < thresh, torch.tensor(0.0, device=FCG.device), FCG)
-            del thresh  # Free memory
+            del thresh
 
             # Compute W
             W = torch.matmul(FCG, FCG) * FCG
@@ -429,7 +427,6 @@ class HyperGCT(nn.Module):
             M = None
         else:
             # M = distance(normed_corr_feats)
-            # construct the feature similarity matrix M for loss calculation
             M = torch.matmul(corr_feats.permute(0, 2, 1), corr_feats)
             M = torch.clamp(1 - (1 - M) / self.sigma ** 2, min=0, max=1)
             # # set diagnal of M to zero

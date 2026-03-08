@@ -295,17 +295,13 @@ class FPSWE_pool(nn.Module):
         # for the self-loops double the node to be able to apply the pooling 
         Xslices, hyperedge_index_new = self.double_self_loops(Xslices, hyperedge_index)
         Xslices_sorted, Xind = sparse_sort(Xslices, hyperedge_index_new)
-
-        # regardless of the column sorting, all of them should have the same resorted index
         hyperedge_index_1_sorted = hyperedge_index_new[Xind[:,0]]
         M, dm = self.reference.shape
 
         eps = 0.00001
-        #this should allow a correct interpolation when M>N
         margin_up = 0.9999
         assert (margin_up+eps < 1)
 
-        # Compute constants for this forward pass (no caching to support varying batch structures)
         deg_helper = torch.ones_like(hyperedge_index_1_sorted)
         R = torch.arange(hyperedge_index_1_sorted.shape[0]).to(X.device).to(X.dtype)+1
         pad = torch.tensor([0.0]).to(X.device)
@@ -334,7 +330,6 @@ class FPSWE_pool(nn.Module):
         xnew = xnew + hyperedge_index_anchors_1
         xnew = xnew.unsqueeze(0).repeat(self.num_projections, 1)
 
-        #this still correspond to hyperedge_index_1_sorted
         y = torch.transpose(Xslices_sorted, 0, 1).reshape(self.num_projections, -1)
         
         # interpolate y based on the x values
@@ -348,27 +343,23 @@ class FPSWE_pool(nn.Module):
         # Step 3: sort references and compute proper Wasserstein distance
         _, Rind = sparse_sort(Rslices, hyperedge_index_anchors_1)
         
-        # Compute distance between sorted samples (this IS the 1D Wasserstein distance)
         embeddings = Rslices - torch.gather(Xslices_sorted_interpolated, dim=0, index=Rind)
-        del Rind, Rslices, Xslices_sorted_interpolated  # Free immediately
+        del Rind, Rslices, Xslices_sorted_interpolated
         
         embeddings = embeddings.transpose(0, 1)  # [num_projections, num_edges*M]
         embeddings = embeddings.reshape(self.num_projections, num_edges, M)  # [num_projections, num_edges, M]
         
-        # Step 4: weighted sum (learned weights are important for Wasserstein!)
+        # Step 4: weighted sum
         w = self.weight.unsqueeze(1).repeat(1, num_edges, 1)  # [num_projections, num_edges, M]
         weighted_embeddings = (w * embeddings).mean(-1)  # [num_projections, num_edges]
-        del w, embeddings  # Free
+        del w, embeddings
         
         out = weighted_embeddings.transpose(0, 1)  # [num_edges, num_projections]
         del weighted_embeddings
         
-        # Cleanup remaining tensors
         del Xslices, Xslices_sorted, Xind, hyperedge_index_new, hyperedge_index_1_sorted
         del deg_helper, R, pad, hyperedge_index_anchors_1, xnew, ynew
         del D1, D, ptr, P, x, y
-        
-        # Return compact output - caller handles index mapping
         return out.contiguous(), edges
         
 
@@ -409,8 +400,6 @@ class feature_aggregation_layer(nn.Module):
 
     def forward(self, vertex_feat, edge_feat, edge_weight, incidence, inv_edge_degree, inv_vertex_degree, 
                 edge_scale, knn_k):
-        # Renames: x->vertex_feat, y->edge_feat, W->edge_weight, H->incidence,
-        # De_n_1->inv_edge_degree, Dv_n_1->inv_vertex_degree, W_edge->edge_scale, k->knn_k
         batch_size, num_channels, num_nodes = vertex_feat.size()
         edge_feat_out = None
         if self.use_knn:
@@ -568,7 +557,6 @@ class WHNN_aggregation_layer(nn.Module):
         edge_scale,
         knn_k,
     ):
-        # Keep signature aligned with feature_aggregation_layer; unused args are ignored.
         if torch.cuda.is_available():
             torch.cuda.synchronize()
             torch.cuda.reset_peak_memory_stats()
@@ -673,7 +661,7 @@ class HGNN_layer(nn.Module):
             vertex_feat = vertex_feat_conv + vertex_feat
             del vertex_feat_conv
         
-        del vertex_feat_out  # Free after use
+        del vertex_feat_out
         vertex_feat = F.leaky_relu(vertex_feat, negative_slope=0.2)
         
         if not self.use_edge_feature:
@@ -727,19 +715,17 @@ class HGNN(nn.Module):
         batch_size, num_dims, num_points = vertex_feat.size()  # bs, 12, num_corr
 
         # 1. edge_weight[edge_weight>0] = 1
-        incidence = edge_weight.clone()  # Clone to avoid modifying input
+        incidence = edge_weight.clone()
         incidence[incidence > 0] = 1.0
         # 2. Degree of V, E.
         degree = incidence.sum(dim=1)  # [bs, num_points]
 
-        raw_incidence = incidence.clone()  # Keep a copy
-        # Compute inverse degrees as vectors, not full diagonal matrices
+        raw_incidence = incidence.clone()
         inv_degree_vec = 1.0 / (degree + 1e-10)  # [bs, num_points]
         inv_degree_vec[torch.isinf(inv_degree_vec)] = 0
-        # Store as [bs, num_points, 1] for broadcasting in bmm
         inv_edge_degree = inv_degree_vec.unsqueeze(-1)
-        inv_vertex_degree = inv_edge_degree  # The initial incidence matrix is symmetric
-        del degree, inv_degree_vec  # Free after use
+        inv_vertex_degree = inv_edge_degree
+        del degree, inv_degree_vec
 
         # 3. edge weight = sum(W, dim=0)
         edge_scale = edge_weight.sum(dim=1)  # [bs, num]
@@ -747,13 +733,12 @@ class HGNN(nn.Module):
         edge_scale = edge_scale.view([batch_size, num_points, 1])
 
         feat = self.layer0(vertex_feat)
-        feat0 = feat.clone()  # Keep initial features
+        feat0 = feat.clone()
         edge_feat = None
         
         for i in range(self.num_layers):
             theta = math.log(self.lamda / (i + 1) + 1)
             
-            # Store previous features for cleanup
             feat_prev = feat
             edge_feat_prev = edge_feat
             
@@ -761,7 +746,6 @@ class HGNN(nn.Module):
                                                             inv_edge_degree, inv_vertex_degree, edge_scale, 
                                                             self.alpha, theta, feat0, self.k)
             
-            # Free previous layer's features
             if i > 0:
                 del feat_prev
                 if edge_feat_prev is not None:
@@ -774,7 +758,6 @@ class HGNN(nn.Module):
             
             # change hypergraph dynamically
             if i < self.num_layers - 1:
-                # Store old values for cleanup
                 old_incidence = incidence
                 old_inv_edge_degree = inv_edge_degree
                 old_inv_vertex_degree = inv_vertex_degree
@@ -782,10 +765,8 @@ class HGNN(nn.Module):
                 
                 incidence, edge_score, inv_edge_degree, inv_vertex_degree, edge_scale = self.blocks[f'update_graph_{i}'](incidence, feat, edge_feat, i)
                 
-                # Free old values
                 del old_incidence, old_inv_edge_degree, old_inv_vertex_degree, old_edge_scale
         
-        # Final cleanup
         del feat0, inv_edge_degree, inv_vertex_degree, edge_scale, incidence
         
         return raw_incidence, raw_incidence.clone(), edge_score, feat
@@ -830,15 +811,12 @@ class HyperGCT(nn.Module):
         FCG_K = int(num_corr * 0.1)
         
         with torch.no_grad():
-            # Compute pairwise distances in chunks to avoid OOM
-            # Instead of creating [bs, num_corr, num_corr] all at once
-            chunk_size = 128  # Process 128 correspondences at a time
+            chunk_size = 128
             FCG = torch.zeros(bs, num_corr, num_corr, device=src_pts.device, dtype=src_pts.dtype)
             
             for start_idx in range(0, num_corr, chunk_size):
                 end_idx = min(start_idx + chunk_size, num_corr)
                 
-                # Compute distances for chunk: [bs, chunk, num_corr]
                 src_chunk = src_pts[:, start_idx:end_idx, None, :]  # [bs, chunk, 1, 3]
                 src_dist_chunk = ((src_chunk - src_pts[:, None, :, :]) ** 2).sum(-1) ** 0.5
                 
@@ -856,11 +834,11 @@ class HyperGCT(nn.Module):
             sorted_value, _ = torch.topk(FCG, FCG_K, dim=2, largest=True, sorted=False)
             sorted_value = sorted_value.reshape(bs, -1)
             thresh = sorted_value.mean(dim=1, keepdim=True).unsqueeze(2)
-            del sorted_value  # Free memory
+            del sorted_value
 
             # Apply threshold
             FCG = torch.where(FCG < thresh, torch.tensor(0.0, device=FCG.device), FCG)
-            del thresh  # Free memory
+            del thresh
 
             # Compute W
             W = torch.matmul(FCG, FCG) * FCG
@@ -868,12 +846,11 @@ class HyperGCT(nn.Module):
 
         F0 = corr
         raw_H, H, edge_score, corr_feats = self.encoder(F0.permute(0, 2, 1), W)  # bs, dim, num_corr
-        del W, F0  # Free after encoder
+        del W, F0
         
         confidence = self.classification(corr_feats).squeeze(1)  # bs, 1, num_corr-> bs, num_corr loss has sigmoid
 
         # M = distance(normed_corr_feats)
-        # construct the feature similarity matrix M for loss calculation
         M = torch.matmul(corr_feats.permute(0, 2, 1), corr_feats)
         M = torch.clamp(1 - (1 - M) / self.sigma ** 2, min=0, max=1)
         # # set diagnal of M to zero
