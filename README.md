@@ -25,9 +25,9 @@ src/project/            # Core library
     baselines/          # ICP baseline
   trainers/             # Training loops
   utils/                # SE3, FPFH, correspondence utils, data processing
-  eval/                 # Evaluation notebook
 scripts/                # Preprocessing, training, and eval runner scripts
-docs/                   # Project website
+docs/                   # Project website, report, and poster
+results/                # Evaluation output directory
 ```
 
 ## Data layout
@@ -69,7 +69,6 @@ Two environment files are provided — pick the one matching your CUDA version:
 
 ```bash
 conda env create -f environment.yml        # CUDA 12.8 (default)
-conda env create -f environment_cu126.yml  # CUDA 12.6
 conda activate hyperalign
 ```
 
@@ -88,7 +87,7 @@ pip install -e .
 ### 4. Set data path environment variable
 
 ```bash
-export DATA_PATH=data          # adjust to your absolute path if needed
+export DATA_PATH=data
 ```
 
 ---
@@ -140,8 +139,9 @@ bash scripts/hypergnn_faust_eval.sh
 export MODEL_PATH=snapshot/<run_id>
 bash scripts/hypergnn_partnet_eval.sh
 ```
+Make sure to have the same configs used for training. HyperGCT models can also be evaluated using this script by selecting no Wasserstein layers.
 
-### Train / evaluate HyperGCT
+### Train HyperGCT
 
 ```bash
 bash scripts/hypergct_faust.sh
@@ -152,7 +152,7 @@ bash scripts/hypergct_partnet.sh
 ### ICP baseline sweep
 
 ```bash
-python scripts/icp_sweep.py --out results/icp_sweep.csv --repeats 5
+python scripts/icp_sweep.py --out results/icp_sweep.csv --repeats 10
 ```
 
 ---
@@ -168,7 +168,7 @@ After evaluation the scripts print a per-pair CSV and a summary table. Typical m
 | **Translation error (TE)** | Mean translation error in cm (threshold: 30 cm) |
 | **Inlier ratio** | Fraction of predicted correspondences within the inlier threshold |
 
-Pre-computed result tables and Wasserstein metric plots are available in [docs/](docs/index.html).
+Pre-computed result tables and Wasserstein metric plots are available in [docs/].
 
 ---
 
