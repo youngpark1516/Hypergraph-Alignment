@@ -4,8 +4,8 @@ Aligning 3D point clouds of deforming or articulated objects is challenging beca
 
 We represent each point cloud as a hypergraph, where hyperedges capture local geometric structure (clusters of nearby points). A graph neural network (HyperGNN) learns to match hyperedges across source and target clouds, producing a set of correspondence hypotheses that are then refined into a final 6-DoF transformation. We evaluate on two benchmarks:
 
-- **FAUST** — 300 scans of 10 human subjects in varied poses; tests inter- and intra-subject alignment.
-- **PartNet-Mobility (SAPIEN)** — articulated objects (chairs, cabinets, etc.) under rigid and affine deformations at multiple noise levels.
+- **FAUST** : 300 scans of 10 human subjects in varied poses; tests inter- and intra-subject alignment.
+- **PartNet-Mobility (SAPIEN)** : articulated objects (chairs, cabinets, etc.) under rigid and affine deformations at multiple noise levels.
 
 A classical ICP baseline and a spectral-matching baseline (HyperGCT) are included for comparison.
 
@@ -65,7 +65,7 @@ data/
 
 ### 1. Create the environment
 
-Two environment files are provided — pick the one matching your CUDA version:
+Two environment files are provided : pick the one matching your CUDA version:
 
 ```bash
 conda env create -f environment.yml        # CUDA 12.8 (default)
@@ -80,9 +80,9 @@ pip install -e .
 
 ### 3. Download datasets
 
-**FAUST** — download the training and test scans from [http://faust.is.tue.mpg.de](http://faust.is.tue.mpg.de) and place the raw files under `data/faust/` following the data layout above.
+**FAUST** : download the training and test scans from [http://faust.is.tue.mpg.de](http://faust.is.tue.mpg.de) and place the raw files under `data/faust/` following the data layout above.
 
-**PartNet-Mobility** — download object point clouds from [https://sapien.ucsd.edu/downloads](https://sapien.ucsd.edu/downloads) and place them under `data/partnet/point_clouds/`.
+**PartNet-Mobility** : download object point clouds from [https://sapien.ucsd.edu/downloads](https://sapien.ucsd.edu/downloads) and place them under `data/partnet/point_clouds/`.
 
 ### 4. Set data path environment variable
 
@@ -174,7 +174,7 @@ Pre-computed result tables and Wasserstein metric plots are available in [docs/]
 
 ## Future work
 
-- [ ] **Systematic layer-placement study** — the current results show that Wasserstein pooling layer placement matters, but only a limited set of configurations was tested. A more exhaustive grid or search over placement patterns is needed to determine whether the observed trends generalize.
-- [ ] **Runtime and memory benchmarking** — Wasserstein-based aggregation is more expensive than mean pooling, but this overhead has not been quantified. Future work should profile wall-clock time and peak memory usage and weigh them against accuracy gains to inform practical adoption.
-- [ ] **Broader benchmark evaluation** — experiments are currently limited to FAUST and PartNet transformation regimes (rigid, affine-1.5, affine-2.0). Evaluating on settings with heavy noise, partial overlap, outliers, or large-scale scenes would better characterize the method's real-world applicability.
-- [ ] **Mechanistic understanding** — structural diagnostics show how representations change under Wasserstein aggregation, but do not fully explain *why* certain configurations yield better final alignment. Closing this gap would require analysis linking representation geometry to downstream registration accuracy.
+- [ ] **Systematic layer-placement study** : the current results show that Wasserstein pooling layer placement matters, but only a limited set of configurations was tested. A more exhaustive grid or search over placement patterns is needed to determine whether the observed trends generalize.
+- [ ] **Runtime and memory benchmarking** : Wasserstein-based aggregation is more expensive than mean pooling, but this overhead has not been quantified. Future work should profile wall-clock time and peak memory usage and weigh them against accuracy gains to inform practical adoption.
+- [ ] **Broader benchmark evaluation** : experiments are currently limited to FAUST and PartNet transformation regimes (rigid, affine-1.5, affine-2.0). Evaluating on settings with heavy noise, partial overlap, outliers, or large-scale scenes would better characterize the method's real-world applicability.
+- [ ] **Mechanistic understanding** : structural diagnostics show how representations change under Wasserstein aggregation, but do not fully explain *why* certain configurations yield better final alignment. Closing this gap would require analysis linking representation geometry to downstream registration accuracy.
