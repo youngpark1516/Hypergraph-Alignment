@@ -14,21 +14,20 @@ A classical ICP baseline and a spectral-matching baseline (HyperGCT) are include
 ## Repository layout
 
 ```text
-src/project/          # Core library
-  config/             # YAML configs per model × dataset
-  dataset.py          # Dataset loaders (FAUST, PartNet)
-  hypergnn_main.py    # HyperGNN train / eval entry point
-  hypergct_main.py    # HyperGCT train / eval entry point
-  models/             # Model definitions and losses
-    hypergnn/         # HyperGNN (Wasserstein aggregation)
-    hypergct/         # HyperGCT (spectral matching)
-    baselines/        # ICP baseline
-  trainers/           # Training loops
-  utils/              # SE3, FPFH, correspondence utils, data processing
-  eval/               # Evaluation notebook (visualize_results.ipynb)
-configs/              # Top-level run configs (sweeps)
-scripts/              # Preprocessing + sweep runner scripts
-docs/                 # Project website + result tables/plots
+src/project/            # Core library
+  config/               # YAML configs per model × dataset
+  dataset.py            # Dataset loaders
+  hypergnn_main.py      # HyperGNN train / eval entry point
+  hypergct_main.py      # HyperGCT train / eval entry point
+  models/               # Models
+    hypergnn/           # WHNN
+    hypergct/           # HyperGCT
+    baselines/          # ICP baseline
+  trainers/             # Training loops
+  utils/                # SE3, FPFH, correspondence utils, data processing
+  eval/                 # Evaluation notebook
+scripts/                # Preprocessing, training, and eval runner scripts
+docs/                   # Project website
 ```
 
 ## Data layout
