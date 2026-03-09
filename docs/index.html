@@ -37,7 +37,7 @@
         <a href="#evaluation">Evaluation</a>
         <a href="#results">Results</a>
         <a href="#limitations">Limitations</a>
-        <a href="#links">Links</a>
+        <a href="#references">References</a>
       </div>
     </nav>
   </header>
@@ -71,9 +71,9 @@
         <a class="btn" target="_blank" rel="noreferrer"
            href="https://github.com/youngpark1516/Hypergraph-Alignment">Code</a>
         <a class="btn btn-outline" target="_blank" rel="noreferrer"
-           href="assets/report.pdf">Report (PDF)</a>
+           href="assets/pdf/report.pdf">Report (PDF)</a>
         <a class="btn btn-outline" target="_blank" rel="noreferrer"
-           href="assets/poster.pdf">Poster (PDF)</a>
+           href="assets/pdf/poster.pdf">Poster (PDF)</a>
       </div>
     </section>
 
@@ -124,6 +124,15 @@
           with a matching-based hypothesis-generation alternative.
         </li>
       </ul>
+
+      <p>
+        Beyond point cloud alignment, the core finding is that distribution-aware aggregation 
+        consistently outperforms mean pooling in a geometric task. This suggests it can serve 
+        as a broadly applicable building block for graph and hypergraph learning, especially 
+        in settings where neighborhoods are multi-modal or have high variance. Concurrent work 
+        by Duta & Lió<sup>[<a href="#ref-18" class="cite">18</a>]</sup> explores related 
+        Wasserstein pooling approaches in hypergraph learning more generally.
+      </p>
     </section>
 
     <!-- PROBLEM SETUP -->
@@ -135,10 +144,10 @@
         even under partial overlap, noise, and challenging geometric transformations.
       </p>
       <p>
-        We frame this as a classification problem over candidate source–target pairs:
+        We frame this as a classification problem over candidate source-target pairs:
         each candidate pair is predicted as an inlier (true correspondence) or outlier.
         During evaluation, candidates are generated using k-nearest neighbors in feature space.
-        In our experiments, we evaluate FAUST as a piecewise-rigid setting and PartNet under
+        In our experiments, we evaluate FAUST<sup>[<a href="#ref-3" class="cite">3</a>]</sup> as a piecewise-rigid setting and PartNet<sup>[<a href="#ref-4" class="cite">4</a>]</sup> under
         rigid, 1.5× affine, and 2.0× affine regimes.
       </p>
     </section>
@@ -191,7 +200,7 @@
           <p>
             Our idea is to aggregate by comparing this distribution to a learned reference
             distribution \( \nu \) using Wasserstein-inspired transport geometry.
-            A common practical approximation is the sliced Wasserstein distance, which projects
+            A common practical approximation is the sliced Wasserstein distance<sup>[<a href="#ref-17" class="cite">17</a>]</sup>, which projects
             features onto 1D directions \( \theta \) and averages projected transport discrepancies:
           </p>
 
@@ -223,7 +232,7 @@
 
       <div class="bullets">
         <div class="card">
-          <h3>ICP (Iterative Closest Point)</h3>
+          <h3>ICP (Iterative Closest Point) <sup>[<a href="#ref-1" class="cite">1</a>,<a href="#ref-2" class="cite">2</a>]</sup></h3>
           <p>
             ICP is a classical alignment method that alternates between assigning closest-point
             correspondences and updating the transformation. It works well for rigid or near-rigid
@@ -281,7 +290,7 @@
         </div>
 
         <div class="card">
-          <h3>HyperGCT (dynamic hypergraph alignment baseline)</h3>
+          <h3>HyperGCT (dynamic hypergraph alignment baseline) <sup>[<a href="#ref-5" class="cite">5</a>]</sup></h3>
           <p>
             HyperGCT builds a dynamic hypergraph over candidate correspondences and uses hypergraph
             message passing to classify inliers vs. outliers. In the standard HyperGCT pipeline,
@@ -302,7 +311,7 @@
               <p>
                 HyperGCT-style alignment treats <em>candidate correspondences</em> as the main objects to score,
                 rather than directly regressing a transform from raw point clouds.
-                A candidate node is a source–target pair
+                A candidate node is a source-target pair
                 \( v=(i,j) \), where source point \( p_i \) is paired with target point \( q_j \).
               </p>
 
@@ -406,7 +415,7 @@
       <ol class="pipeline">
         <li>
           <strong>Candidate generation:</strong>
-          construct source–target candidate pairs \( v=(i,j) \) (training: labeled positives/negatives;
+          construct source-target candidate pairs \( v=(i,j) \) (training: labeled positives/negatives;
           evaluation: feature-space kNN candidates).
         </li>
         <li>
@@ -526,7 +535,7 @@
       <h2>Evaluation</h2>
 
       <p>
-        We evaluate correspondence prediction as binary classification over candidate source–target pairs.
+        We evaluate correspondence prediction as binary classification over candidate source-target pairs.
         At test time, candidates are built using label-blind feature kNN retrieval between the two point clouds.
       </p>
 
@@ -534,7 +543,7 @@
         <div class="card">
           <h3>Data</h3>
             <ul>
-              <li><strong>Datasets:</strong> FAUST and PartNet.</li>
+              <li><strong>Datasets:</strong> FAUST<sup>[<a href="#ref-3" class="cite">3</a>]</sup> and PartNet<sup>[<a href="#ref-4" class="cite">4</a>]</sup>.</li>
               <li><strong>Settings:</strong> FAUST is evaluated as a piecewise-rigid alignment setting, while PartNet is evaluated under rigid, 1.5× affine, and 2.0× affine regimes.</li>
               <li><strong>Transformation regimes:</strong> The evaluation spans one piecewise-rigid setting and three PartNet regimes of increasing difficulty.</li>
             </ul>
@@ -814,6 +823,11 @@ against the HyperGCT baseline.
             explain why one configuration gives the best final alignment.
           </li>
         </ul>
+      <p>
+        Immediate next steps include quantifying the runtime cost of Wasserstein aggregation,
+        exploring differentiable or learned placement selection to avoid the manual ablation search,
+        and testing generalization on real-world scan data (e.g., outdoor LiDAR, partial-overlap pairs).
+      </p>
     </section>
 
     <!-- LINKS -->
@@ -822,9 +836,34 @@ against the HyperGCT baseline.
       <a class="btn" target="_blank" rel="noreferrer"
            href="https://github.com/youngpark1516/Hypergraph-Alignment">Code</a>
       <a class="btn btn-outline" target="_blank" rel="noreferrer"
-          href="assets/report.pdf">Report (PDF)</a>
+          href="assets/pdf/report.pdf">Report (PDF)</a>
       <a class="btn btn-outline" target="_blank" rel="noreferrer"
-          href="assets/poster.pdf">Poster (PDF)</a>
+          href="assets/pdf/poster.pdf">Poster (PDF)</a>
+    </section>
+
+    <!-- REFERENCES -->
+    <section id="references" class="section">
+      <h2>References</h2>
+      <ol class="references-list">
+        <li id="ref-1">Besl, P. J. and McKay, N. D. &ldquo;<a href="https://doi.org/10.1109/34.121791" target="_blank" rel="noreferrer">A Method for Registration of 3-D Shapes</a>.&rdquo; <em>IEEE TPAMI</em>, 14(2):239–256, 1992.</li>
+        <li id="ref-2">Chen, Y. and Medioni, G. &ldquo;<a href="https://doi.org/10.1016/0262-8856(92)90066-C" target="_blank" rel="noreferrer">Object Modelling by Registration of Multiple Range Images</a>.&rdquo; <em>Image and Vision Computing</em>, 10(3):145–155, 1992.</li>
+        <li id="ref-3">Bogo, F., Romero, J., Loper, M., and Black, M. J. &ldquo;<a href="https://doi.org/10.1109/CVPR.2014.491" target="_blank" rel="noreferrer">FAUST: Dataset and Evaluation for 3D Mesh Registration</a>.&rdquo; <em>CVPR</em>, 2014.</li>
+        <li id="ref-4">Mo, K., Zhu, S., Chang, A. X., Yi, L., Tripathi, S., Guibas, L. J., and Su, H. &ldquo;<a href="https://doi.org/10.1109/CVPR.2019.00100" target="_blank" rel="noreferrer">PartNet: A Large-Scale Benchmark for Fine-Grained and Hierarchical Part-Level 3D Object Understanding</a>.&rdquo; <em>CVPR</em>, 2019.</li>
+        <li id="ref-5">Zhang, X. et al. &ldquo;<a href="https://openaccess.thecvf.com/content/ICCV2025/html/Zhang_HyperGCT_A_Dynamic_Hyper-GNN-Learned_Geometric_Constraint_for_3D_Registration_ICCV_2025_paper.html" target="_blank" rel="noreferrer">HyperGCT: A Dynamic Hyper-GNN-Learned Geometric ConstrainT for 3D Registration</a>.&rdquo; <em>ICCV</em>, 2025.</li>
+        <li id="ref-6">Qi, C. R., Su, H., Mo, K., and Guibas, L. J. &ldquo;<a href="https://doi.org/10.1109/CVPR.2017.16" target="_blank" rel="noreferrer">PointNet: Deep Learning on Point Sets for 3D Classification and Segmentation</a>.&rdquo; <em>CVPR</em>, 2017.</li>
+        <li id="ref-7">Wang, Y., Sun, Y., Liu, Z., Sarma, S. E., Bronstein, M. M., and Solomon, J. M. &ldquo;<a href="https://doi.org/10.1145/3326362" target="_blank" rel="noreferrer">Dynamic Graph CNN for Learning on Point Clouds</a>.&rdquo; <em>ACM TOG</em>, 38(5), 2019.</li>
+        <li id="ref-8">Aoki, Y., Goforth, H., Srivatsan, R. A., and Lucey, S. &ldquo;<a href="https://doi.org/10.1109/CVPR.2019.00733" target="_blank" rel="noreferrer">PointNetLK: Robust &amp; Efficient Point Cloud Registration Using PointNet</a>.&rdquo; <em>CVPR</em>, 2019.</li>
+        <li id="ref-9">Wang, Y. and Solomon, J. M. &ldquo;<a href="https://doi.org/10.1109/ICCV.2019.00362" target="_blank" rel="noreferrer">Deep Closest Point: Learning Representations for Point Cloud Registration</a>.&rdquo; <em>ICCV</em>, 2019.</li>
+        <li id="ref-10">Yew, Z. J. and Lee, G. H. &ldquo;<a href="https://doi.org/10.1109/CVPR42600.2020.01184" target="_blank" rel="noreferrer">RPM-Net: Robust Point Matching Using Learned Features</a>.&rdquo; <em>CVPR</em>, 2020.</li>
+        <li id="ref-11">Kipf, T. N. and Welling, M. &ldquo;<a href="https://arxiv.org/abs/1609.02907" target="_blank" rel="noreferrer">Semi-Supervised Classification with Graph Convolutional Networks</a>.&rdquo; <em>ICLR</em>, 2017.</li>
+        <li id="ref-12">Feng, Y., You, H., Zhang, Z., Ji, R., and Gao, Y. &ldquo;<a href="https://doi.org/10.1609/aaai.v33i01.33013558" target="_blank" rel="noreferrer">Hypergraph Neural Networks</a>.&rdquo; <em>AAAI</em>, 2019.</li>
+        <li id="ref-13">Zaheer, M., Kottur, S., Ravanbakhsh, S., Poczos, B., Salakhutdinov, R. R., and Smola, A. J. &ldquo;<a href="https://arxiv.org/abs/1703.06114" target="_blank" rel="noreferrer">Deep Sets</a>.&rdquo; <em>NeurIPS</em>, 2017.</li>
+        <li id="ref-14">Cuturi, M. &ldquo;<a href="https://papers.nips.cc/paper/4927-sinkhorn-distances-lightspeed-computation-of-optimal-transport" target="_blank" rel="noreferrer">Sinkhorn Distances: Lightspeed Computation of Optimal Transport</a>.&rdquo; <em>NeurIPS</em>, 2013.</li>
+        <li id="ref-15">Villani, C. <a href="https://link.springer.com/book/10.1007/978-3-540-71050-9" target="_blank" rel="noreferrer"><em>Optimal Transport: Old and New</em></a>. Springer, 2009.</li>
+        <li id="ref-16">Peyré, G. and Cuturi, M. &ldquo;<a href="https://arxiv.org/abs/1803.00567" target="_blank" rel="noreferrer">Computational Optimal Transport</a>.&rdquo; <em>Foundations and Trends in Machine Learning</em>, 2019.</li>
+        <li id="ref-17">Kolouri, S., Nadjahi, K., Simsekli, U., Badeau, R., and Rohde, G. &ldquo;<a href="https://arxiv.org/abs/1902.00434" target="_blank" rel="noreferrer">Generalized Sliced Wasserstein Distances</a>.&rdquo; <em>NeurIPS</em>, 2019.</li>
+        <li id="ref-18">Duta, I. and Lió, P. &ldquo;<a href="https://arxiv.org/abs/2506.09682" target="_blank" rel="noreferrer">Wasserstein Hypergraph Neural Network</a>.&rdquo; <em>arXiv preprint</em>, 2025.</li>
+      </ol>
     </section>
 
     <footer class="footer">
