@@ -116,11 +116,11 @@
         <li>
           <strong>Placement study:</strong>
           We compare several layer-placement strategies and show that the best placement depends
-          on the dataset and deformation regime.
+          on the dataset and transformation regime.
         </li>
         <li>
-          <strong>Piecewise-rigid post-processing change:</strong>
-          For the piecewise-rigid setting, we replace HyperGCT’s original post-processing stage
+          <strong>Matching-based post-processing:</strong>
+          For downstream alignment, we replace HyperGCT’s original post-processing stage
           with a matching-based hypothesis-generation alternative.
         </li>
       </ul>
@@ -132,12 +132,14 @@
       <p>
         Given a source point cloud and a target point cloud, our goal is to predict
         correct point-to-point correspondences between the two shapes (dense or semi-dense),
-        even when the data includes non-rigid deformation, partial overlap, and noise.
+        even under partial overlap, noise, and challenging geometric transformations.
       </p>
       <p>
         We frame this as a classification problem over candidate source–target pairs:
         each candidate pair is predicted as an inlier (true correspondence) or outlier.
         During evaluation, candidates are generated using k-nearest neighbors in feature space.
+        In our experiments, we evaluate FAUST as a piecewise-rigid setting and PartNet under
+        rigid, 1.5× affine, and 2.0× affine regimes.
       </p>
     </section>
 
@@ -188,26 +190,28 @@
 
           <p>
             Our idea is to aggregate by comparing this distribution to a learned reference
-            distribution \( \nu \) using an optimal transport (Wasserstein) distance.
+            distribution \( \nu \) using Wasserstein-inspired transport geometry.
             A common practical approximation is the sliced Wasserstein distance, which projects
-            features onto 1D directions \( \theta \) and averages 1D Wasserstein distances:
+            features onto 1D directions \( \theta \) and averages projected transport discrepancies:
           </p>
 
           <div class="eq">
             \[
-              \mathrm{SW}(\mu,\nu)
-              =
-              \frac{1}{L}\sum_{\ell=1}^{L}
-              W_1\!\left((P_{\theta_\ell})_{\#}\mu,\,(P_{\theta_\ell})_{\#}\nu\right)
+              \mathrm{SW}_2(\mu,\nu)
+              \approx
+              \left(
+                \frac{1}{L}\sum_{\ell=1}^{L}
+                W_2^2\!\left((P_{\theta_\ell})_{\#}\mu,\,(P_{\theta_\ell})_{\#}\nu\right)
+              \right)^{1/2}
             \]
           </div>
 
           <p>
             where \( (P_{\theta})_{\#} \) denotes the pushforward distribution after projection onto
-            direction \( \theta \), and \( W_1 \) is the 1D Wasserstein-1 distance computed
-            from sorted projected samples. Intuitively, mean pooling keeps only the first moment,
-            while Wasserstein-style aggregation is sensitive to how mass is arranged, helping
-            preserve multi-modal neighborhood structure.
+            direction \( \theta \). In our implementation, these projected transport features are used
+            as learned pooling features rather than as a standalone scalar distance. Intuitively, mean
+            pooling keeps only a simple average, while Wasserstein-style aggregation is more sensitive
+            to how feature mass is arranged, helping preserve multi-modal neighborhood structure.
           </p>
         </div>
       </details>
@@ -529,20 +533,20 @@
       <div class="bullets">
         <div class="card">
           <h3>Data</h3>
-          <ul>
-            <li><strong>Datasets:</strong> FAUST and PartNet.</li>
-            <li><strong>Settings:</strong> FAUST non-rigid alignment, plus PartNet rigid and perturbed piecewise-rigid settings.</li>
-            <li><strong>Perturbations:</strong> PartNet is evaluated across increasing perturbation levels, including rigid, 1.5×, and 2.0× regimes.</li>
-          </ul>
+            <ul>
+              <li><strong>Datasets:</strong> FAUST and PartNet.</li>
+              <li><strong>Settings:</strong> FAUST is evaluated as a piecewise-rigid alignment setting, while PartNet is evaluated under rigid, 1.5× affine, and 2.0× affine regimes.</li>
+              <li><strong>Transformation regimes:</strong> The evaluation spans one piecewise-rigid setting and three PartNet regimes of increasing difficulty.</li>
+            </ul>
         </div>
 
         <div class="card">
           <h3>Protocol</h3>
-          <ul>
-            <li><strong>Candidate set:</strong> kNN in feature space (label-blind) between source and target.</li>
-            <li><strong>Prediction:</strong> model outputs an inlier confidence per candidate pair.</li>
-            <li><strong>Matching:</strong> convert confidences into a matching plan via two-stage spectral matching.</li>
-          </ul>
+            <ul>
+              <li><strong>Candidate set:</strong> kNN in feature space (label-blind) between source and target.</li>
+              <li><strong>Prediction:</strong> model outputs an inlier confidence per candidate pair.</li>
+              <li><strong>Matching:</strong> convert confidences into a matching plan using greedy expansion or two-stage spectral matching, depending on the experiment.</li>
+            </ul>
         </div>
 
         <div class="card">
@@ -661,9 +665,9 @@
       <p>
         Across all evaluated regimes, at least one Wasserstein configuration improves over the
         learned HyperGCT mean-pooling baseline. The best placement, however, depends on the dataset
-        and deformation setting: on FAUST, all-layer aggregation performs best, while on PartNet
-        the strongest learned configuration changes across rigid and perturbed regimes. In the
-        easiest rigid PartNet setting, ICP remains nearly perfect even though Wasserstein-based
+        and transformation setting: on FAUST, all-layer aggregation performs best, while on PartNet
+        the strongest learned configuration changes across rigid, 1.5× affine, and 2.0× affine regimes.
+        In the easiest rigid PartNet setting, ICP remains nearly perfect even though Wasserstein-based
         variants strengthen the learned model.
       </p>
 
@@ -724,14 +728,14 @@ against the HyperGCT baseline.
             <img src="assets/plots/validation.png"
                  alt="Precision and F1 by Dataset and Method" />
             <figcaption>
-              Precision and F1 scores by dataset and method across deformation regimes.
+              Precision and F1 scores by dataset and method across transformation regimes.
             </figcaption>
           </figure>
           <aside class="result-note card">
             <h4>What this figure shows</h4>
               <ul>
-                <li><strong>At least one Wasserstein variant improves over HyperGCT in every regime.</strong> The gain is modest on FAUST and larger under stronger PartNet perturbations.</li>
-                <li><strong>The best placement is regime-dependent.</strong> All-layer aggregation is strongest on FAUST, while the best PartNet configuration shifts across rigid, 1.5×, and 2.0× settings.</li>
+                <li><strong>At least one Wasserstein variant improves over HyperGCT in every regime.</strong> The gain is modest on FAUST and larger in the harder PartNet affine settings.</li>
+                <li><strong>The best placement is regime-dependent.</strong> All-layer aggregation is strongest on FAUST, while the best PartNet configuration shifts across rigid, 1.5× affine, and 2.0× affine settings.</li>
                 <li><strong>Rigid PartNet is a special case.</strong> The strongest learned variants are Last 2 layers and First + Last, but ICP remains nearly perfect in the easiest rigid regime.</li>
                 <li><strong>The main pattern is architectural sensitivity.</strong> The results support the idea that Wasserstein aggregation helps, but where it is inserted matters substantially.</li>
               </ul>
@@ -751,8 +755,8 @@ against the HyperGCT baseline.
             <h4>Key observations</h4>
               <ul>
                 <li><strong>Wasserstein improves alignment quality over HyperGCT.</strong> In every evaluated regime, at least one WHNN configuration achieves better L1 improvement than the mean-pooling learned baseline.</li>
-                <li><strong>ICP is still strongest in the easiest rigid case.</strong> The learned models become more competitive and more clearly advantageous as the perturbation regime becomes harder.</li>
-                <li><strong>Placement effects differ between metrics and regimes.</strong> On PartNet 1.5×, Last 2 layers gives the best F1, while First 2 layers gives the best alignment improvement.</li>
+                <li><strong>ICP is still strongest in the easiest rigid case.</strong> The learned models become more competitive and more clearly advantageous in the harder affine regimes.</li>
+                <li><strong>Placement effects differ between metrics and regimes.</strong> On PartNet 1.5× affine, Last 2 layers gives the best F1, while First 2 layers gives the best alignment improvement.</li>
                 <li><strong>The benefit is downstream, not only classificatory.</strong> Stronger Wasserstein placements improve final matching quality as well as pair-level correspondence metrics.</li>
               </ul>
           </aside>
@@ -769,9 +773,9 @@ against the HyperGCT baseline.
         A central pattern in the report is that Wasserstein aggregation does not help in exactly
         the same way at every depth. On FAUST, applying it throughout the network works best,
         suggesting that preserving distributional structure across the full feature hierarchy is
-        helpful under smooth non-rigid deformation. On PartNet, the best configuration changes
-        with perturbation strength, indicating that early and late aggregation play different roles
-        as the registration problem becomes harder.
+        helpful in this piecewise-rigid setting. On PartNet, the best configuration changes
+        across rigid, 1.5× affine, and 2.0× affine regimes, indicating that early and late
+        aggregation play different roles as the registration problem becomes harder.
       </p>
 
       <p class="results-lead">
