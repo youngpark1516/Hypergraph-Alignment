@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Wasserstein Hypergraph Learning for 3D Point Cloud Alignment</title>
+  <title>Wasserstein Hypergraph Learning for General 3D Point Cloud Alignment</title>
   <meta name="description" content="Public-facing project website for Wasserstein Hypergraph Learning for General 3D Point Cloud Alignment." />
   <link rel="stylesheet" href="assets/css/style.css" />
 
@@ -744,7 +744,6 @@
               <ul>
                 <li><strong>At least one Wasserstein variant improves over HyperGCT in every regime.</strong> The gain is modest on FAUST and larger in the harder PartNet affine settings.</li>
                 <li><strong>The best placement is regime-dependent.</strong> All-layer aggregation is strongest on FAUST, while the best PartNet configuration shifts across rigid, 1.5× affine, and 2.0× affine settings.</li>
-                <li><strong>Rigid PartNet is a special case.</strong> The strongest learned variant is Last 2 layers, but ICP remains nearly perfect in the easiest rigid regime.</li>
                 <li><strong>The main pattern is architectural sensitivity.</strong> The results support the idea that Wasserstein aggregation helps, but where it is inserted matters substantially.</li>
               </ul>
           </aside>
@@ -752,7 +751,7 @@
 
         <article class="result-row">
           <figure class="result-figure result-figure--narrow">
-            <img src="assets/plots/l1_improvement.png"
+            <img src="assets/plots/l1_improvement_full.png"
                  alt="L1-Error Relative Improvement by Dataset and Method" />
             <figcaption>
               L1-error relative improvement, computed as
@@ -762,8 +761,8 @@
           <aside class="result-note card">
             <h4>Key observations</h4>
               <ul>
-                <li><strong>Wasserstein improves alignment quality over HyperGCT.</strong> In every evaluated regime, at least one WHNN configuration achieves better L1 improvement than the mean-pooling learned baseline.</li>
-                <li><strong>ICP is still strongest in the easiest rigid case.</strong> The learned models become more competitive and more clearly advantageous in the harder affine regimes.</li>
+                <li><strong>Wasserstein improves alignment quality over HyperGCT.</strong> In every evaluated regime, at least one WHNN configuration achieves better L1 improvement than the baseline.</li>
+                <li><strong>ICP is the strongest in the easiest rigid case.</strong> The learned models become clearly advantageous in the harder affine regimes.</li>
                 <li><strong>Placement effects differ between metrics and regimes.</strong> On PartNet 1.5× affine, Last 2 layers gives the best F1, while First 2 layers gives the best alignment improvement.</li>
                 <li><strong>The benefit is downstream, not only classificatory.</strong> Stronger Wasserstein placements improve final matching quality as well as pair-level correspondence metrics.</li>
               </ul>
@@ -791,6 +790,12 @@
       </p>
       <details class="details results-details">
         <summary>Full ablation table (all metrics)</summary>
+        <div id="ablation-table-slot">
+          <p class="loading-muted">Loading table...</p>
+        </div>
+      </details>
+      <details class="details results-details">
+        <summary>L1 improvement table</summary>
         <div id="ablation-table-slot">
           <p class="loading-muted">Loading table...</p>
         </div>
