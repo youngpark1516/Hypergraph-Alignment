@@ -152,6 +152,35 @@ def process_partnet(
     )
 
 
+def process_3dmatch(
+    pair_root,
+    save_root,
+    voxel_size=0.02,
+    downsample=True,
+    interp_k=1,
+    affine_whiten=False,
+    affine_whiten_k=10,
+):
+    assert pair_root is not None, "pair_root must be specified for 3DMatch dataset."
+    assert save_root is not None, "save_root must be specified for 3DMatch dataset."
+    os.makedirs(save_root, exist_ok=True)
+
+    pair_files = sorted(glob.glob(os.path.join(pair_root, "**", "*.npz"), recursive=True))
+    if len(pair_files) == 0:
+        raise ValueError(f"No pair files found under {pair_root}")
+
+    process_pairs(
+        pair_files,
+        pair_root,
+        save_root,
+        voxel_size,
+        downsample=downsample,
+        interp_k=interp_k,
+        affine_whiten=affine_whiten,
+        affine_whiten_k=affine_whiten_k,
+    )
+
+
 def process_faust(
     pair_root,
     save_root,
@@ -218,7 +247,7 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        choices=["faust", "partnet"],
+        choices=["faust", "partnet", "3dmatch"],
         required=True,
         help="Dataset to process",
     )
@@ -272,6 +301,16 @@ def main():
         )
     elif args.dataset == "partnet":
         process_partnet(
+            voxel_size=args.voxel_size,
+            pair_root=args.pair_root,
+            save_root=args.save_root,
+            downsample=downsample,
+            interp_k=args.interp_k,
+            affine_whiten=args.affine_whitening,
+            affine_whiten_k=args.affine_whitening_k,
+        )
+    elif args.dataset == "3dmatch":
+        process_3dmatch(
             voxel_size=args.voxel_size,
             pair_root=args.pair_root,
             save_root=args.save_root,
