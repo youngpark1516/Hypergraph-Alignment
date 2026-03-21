@@ -14,15 +14,26 @@ def parse_cloud_index(path: Path) -> int:
     return int(stem.split("_")[-1])
 
 
-def read_pose(info_path: Path) -> np.ndarray:
-    lines = [line.strip() for line in info_path.read_text().splitlines() if line.strip()]
-    if len(lines) < 5:
-        raise ValueError(f"Invalid info file format: {info_path}")
-    values = []
-    for line in lines[1:5]:
-        values.extend(float(x) for x in line.split())
-    pose = np.asarray(values, dtype=np.float64).reshape(4, 4)
-    return pose
+def parse_gt_log(gt_log_path: Path):
+    lines = [line.strip() for line in gt_log_path.read_text().splitlines() if line.strip()]
+    entries = []
+    i = 0
+    while i + 4 < len(lines):
+        header = lines[i].split()
+        if len(header) < 2:
+            raise ValueError(f"Invalid gt.log header at line {i + 1} in {gt_log_path}")
+        src_idx = int(header[0])
+        tgt_idx = int(header[1])
+        mat_vals = []
+        for row in lines[i + 1 : i + 5]:
+            vals = [float(x) for x in row.split()]
+            if len(vals) != 4:
+                raise ValueError(f"Invalid transform row in {gt_log_path}: '{row}'")
+            mat_vals.extend(vals)
+        transform = np.asarray(mat_vals, dtype=np.float64).reshape(4, 4)
+        entries.append((src_idx, tgt_idx, transform))
+        i += 5
+    return entries
 
 
 def load_points(path: Path) -> np.ndarray:
@@ -48,23 +59,15 @@ def transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
     return (points @ rot.T) + trans
 
 
-def relative_transform_src_to_tgt(src_pose: np.ndarray, tgt_pose: np.ndarray) -> np.ndarray:
-    # Poses in .info.txt map local fragment coordinates into a shared world frame.
-    # To map source points into target coordinates: T_tgt_src = inv(P_tgt) @ P_src.
-    return np.linalg.inv(tgt_pose) @ src_pose
-
-
 def build_pair_npz(
     src_points: np.ndarray,
     tgt_points: np.ndarray,
     src_normals: np.ndarray,
     tgt_normals: np.ndarray,
-    src_pose: np.ndarray,
-    tgt_pose: np.ndarray,
+    t_tgt_src: np.ndarray,
     match_radius: float,
     min_corr: int,
 ):
-    t_tgt_src = relative_transform_src_to_tgt(src_pose, tgt_pose)
     src_in_tgt = transform_points(src_points, t_tgt_src)
 
     tgt_tree = cKDTree(tgt_points.astype(np.float64))
@@ -96,21 +99,9 @@ def scene_files(pc_scene_dir: Path):
     return sorted(pc_scene_dir.glob("cloud_bin_*.ply"), key=parse_cloud_index)
 
 
-def choose_pairs(files, max_frame_gap: int):
-    ids = [parse_cloud_index(p) for p in files]
-    pairs = []
-    for i, src_id in enumerate(ids):
-        for j in range(i + 1, len(ids)):
-            tgt_id = ids[j]
-            if max_frame_gap > 0 and (tgt_id - src_id) > max_frame_gap:
-                break
-            pairs.append((files[i], files[j]))
-    return pairs
-
-
 def process_scene(
     pc_scene_dir: Path,
-    pose_scene_dir: Path,
+    eval_scene_dir: Path,
     out_scene_dir: Path,
     max_frame_gap: int,
     max_pairs_per_scene: int,
@@ -122,25 +113,33 @@ def process_scene(
     if not clouds:
         return {"saved": 0, "skipped": 0, "pairs": 0}
 
-    out_scene_dir.mkdir(parents=True, exist_ok=True)
-    pairs = choose_pairs(clouds, max_frame_gap=max_frame_gap)
+    gt_log = eval_scene_dir / "gt.log"
+    if not gt_log.exists():
+        print(f"Skipping {pc_scene_dir.name}: missing {gt_log}")
+        return {"saved": 0, "skipped": 0, "pairs": 0}
+
+    gt_entries = parse_gt_log(gt_log)
+    if max_frame_gap > 0:
+        gt_entries = [e for e in gt_entries if abs(e[1] - e[0]) <= max_frame_gap]
     if max_pairs_per_scene > 0:
-        pairs = pairs[:max_pairs_per_scene]
+        gt_entries = gt_entries[:max_pairs_per_scene]
+
+    out_scene_dir.mkdir(parents=True, exist_ok=True)
+    cloud_map = {parse_cloud_index(p): p for p in clouds}
     points_cache = {}
     normals_cache = {}
-    pose_cache = {}
 
     saved = 0
     skipped = 0
 
-    for src_path, tgt_path in tqdm(pairs, desc=f"{pc_scene_dir.name}", leave=False):
-        src_name = src_path.stem
-        tgt_name = tgt_path.stem
-        src_info = pose_scene_dir / f"{src_name}.info.txt"
-        tgt_info = pose_scene_dir / f"{tgt_name}.info.txt"
-        if not src_info.exists() or not tgt_info.exists():
+    for src_idx, tgt_idx, t_tgt_src in tqdm(gt_entries, desc=f"{pc_scene_dir.name}", leave=False):
+        src_path = cloud_map.get(src_idx)
+        tgt_path = cloud_map.get(tgt_idx)
+        if src_path is None or tgt_path is None:
             skipped += 1
             continue
+        src_name = src_path.stem
+        tgt_name = tgt_path.stem
 
         if src_path not in points_cache:
             points_cache[src_path] = load_points(src_path)
@@ -149,18 +148,12 @@ def process_scene(
             points_cache[tgt_path] = load_points(tgt_path)
             normals_cache[tgt_path] = compute_normals(points_cache[tgt_path], k=normal_k)
 
-        if src_info not in pose_cache:
-            pose_cache[src_info] = read_pose(src_info)
-        if tgt_info not in pose_cache:
-            pose_cache[tgt_info] = read_pose(tgt_info)
-
         pair = build_pair_npz(
             src_points=points_cache[src_path],
             tgt_points=points_cache[tgt_path],
             src_normals=normals_cache[src_path],
             tgt_normals=normals_cache[tgt_path],
-            src_pose=pose_cache[src_info],
-            tgt_pose=pose_cache[tgt_info],
+            t_tgt_src=t_tgt_src,
             match_radius=match_radius,
             min_corr=min_corr,
         )
@@ -172,21 +165,29 @@ def process_scene(
         np.savez_compressed(out_path, **pair)
         saved += 1
 
-    return {"saved": saved, "skipped": skipped, "pairs": len(pairs)}
+    return {"saved": saved, "skipped": skipped, "pairs": len(gt_entries)}
 
 
 def discover_scenes(root: Path):
-    return sorted([p for p in root.iterdir() if p.is_dir()])
+    scenes = []
+    for p in sorted(root.iterdir()):
+        if not p.is_dir():
+            continue
+        if p.name.endswith("-evaluation"):
+            continue
+        if list(p.glob("cloud_bin_*.ply")):
+            scenes.append(p)
+    return scenes
 
 
 def main():
     parser = argparse.ArgumentParser(description="Build 3DMatch pair correspondences in Hypergraph-Alignment format")
     parser.add_argument("--pc-root", type=Path, default=Path("data/3dmatch"), help="3DMatch root containing scene folders with cloud_bin_*.ply")
-    parser.add_argument("--pose-root", type=Path, default=Path("data/3dlomatch/data/indoor/test"), help="Root containing scene folders with cloud_bin_*.info.txt")
+    parser.add_argument("--eval-root", type=Path, default=Path("data/3dmatch"), help="Root containing <scene>-evaluation/gt.log files")
     parser.add_argument("--out-root", type=Path, default=Path("data/3dmatch/pairs"), help="Output root for generated pair .npz files")
     parser.add_argument("--scenes", type=str, default="", help="Comma-separated scene names; empty means all scenes under --pc-root")
-    parser.add_argument("--max-frame-gap", type=int, default=1, help="Max cloud_bin index gap for pair construction; <=0 means all-to-all")
-    parser.add_argument("--max-pairs-per-scene", type=int, default=0, help="Optional cap on number of candidate pairs processed per scene; 0 means no cap")
+    parser.add_argument("--max-frame-gap", type=int, default=0, help="Optional cap on |target_idx - source_idx| for gt.log pairs; 0 keeps all official pairs")
+    parser.add_argument("--max-pairs-per-scene", type=int, default=0, help="Optional cap on number of gt.log pairs processed per scene; 0 means no cap")
     parser.add_argument("--match-radius", type=float, default=0.10, help="Distance threshold (meters) for correspondence acceptance")
     parser.add_argument("--normal-k", type=int, default=30, help="KNN used for normal estimation")
     parser.add_argument("--min-corr", type=int, default=256, help="Minimum accepted correspondences per pair")
@@ -206,14 +207,14 @@ def main():
         if not scene_dir.exists():
             print(f"Skipping missing scene dir: {scene_dir}")
             continue
-        pose_scene_dir = args.pose_root / scene_dir.name
-        if not pose_scene_dir.exists():
-            print(f"Skipping {scene_dir.name}: pose directory not found at {pose_scene_dir}")
+        eval_scene_dir = args.eval_root / f"{scene_dir.name}-evaluation"
+        if not eval_scene_dir.exists():
+            print(f"Skipping {scene_dir.name}: eval directory not found at {eval_scene_dir}")
             continue
 
         stats = process_scene(
             pc_scene_dir=scene_dir,
-            pose_scene_dir=pose_scene_dir,
+            eval_scene_dir=eval_scene_dir,
             out_scene_dir=args.out_root / scene_dir.name,
             max_frame_gap=args.max_frame_gap,
             max_pairs_per_scene=args.max_pairs_per_scene,
