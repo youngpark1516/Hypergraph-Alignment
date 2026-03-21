@@ -110,6 +110,14 @@ bash scripts/process_partnet.sh
 
 This augments raw point clouds into rigid / affine-1.5 / affine-2.0 variants and computes FPFH features for each.
 
+### 3DMatch
+
+```bash
+bash scripts/process_3dmatch.sh
+```
+
+This builds official evaluation-pair fragment correspondences using `<scene>-evaluation/gt.log` into `data/3dmatch/pairs/` and computes FPFH features in `data/3dmatch/fpfh/`.
+
 ---
 
 ## Running experiments
