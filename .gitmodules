@@ -1,0 +1,3 @@
+[submodule "src/whnn"]
+	path = src/whnn
+	url = https://github.com/IuliaDuta/WHNN.git
